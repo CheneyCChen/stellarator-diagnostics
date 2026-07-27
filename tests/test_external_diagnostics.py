@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import numpy as np
+import xarray as xr
 
 from stellarator_diagnostics.external import (
     diagnose_cobra,
@@ -9,6 +10,13 @@ from stellarator_diagnostics.external import (
     read_cobra,
     read_dkes,
     read_neo,
+)
+from stellarator_diagnostics.runners import (
+    SolverDependencyError,
+    run_cobra_solver,
+    run_neo_solver,
+    write_cobra_input,
+    write_neo_input,
 )
 
 
@@ -97,3 +105,111 @@ def test_cobra_new_and_legacy_formats(tmp_path: Path):
     old = read_cobra(legacy)
     assert not old.normalized_s
     assert list(old.data["s"]) == [2.0, 3.0]
+
+
+def _write_executable(path: Path, source: str):
+    path.write_text("#!/usr/bin/env python3\n" + source, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def test_write_solver_inputs(tmp_path: Path):
+    neo = write_neo_input(
+        tmp_path / "neo_in.case",
+        "boozmn_case.nc",
+        "neo_out.case",
+        [3, 7],
+    )
+    neo_lines = neo.read_text(encoding="utf-8").splitlines()
+    assert neo_lines[3] == "boozmn_case.nc"
+    assert neo_lines[4] == "neo_out.case"
+    assert neo_lines[5:7] == ["2", "3 7"]
+
+    cobra = write_cobra_input(
+        tmp_path / "in_cobra.case",
+        "case",
+        [2, 5, 8],
+        [0, 90],
+        [0, 120, 240],
+    )
+    cobra_lines = cobra.read_text(encoding="utf-8").splitlines()
+    assert cobra_lines == [
+        "case",
+        "10 0",
+        "T F",
+        "2",
+        "0 90",
+        "3",
+        "0 120 240",
+        "3",
+        "2 5 8",
+    ]
+
+
+def test_run_neo_solver_with_fake_executable(tmp_path: Path):
+    wout = tmp_path / "wout_case.nc"
+    xr.Dataset({"ns": xr.DataArray(9)}).to_netcdf(wout)
+    boozmn = tmp_path / "boozmn_case.nc"
+    xr.Dataset(
+        {
+            "jlist": ("radius", [2, 5, 8]),
+            "s_b": ("radius", [0.125, 0.5, 0.875]),
+            "bmnc_b": (("radius", "mn"), np.ones((3, 2))),
+        }
+    ).to_netcdf(boozmn)
+    executable = _write_executable(
+        tmp_path / "xneo",
+        "from pathlib import Path\n"
+        "import sys\n"
+        "ext = sys.argv[1]\n"
+        "assert Path(f'neo_in.{ext}').is_file()\n"
+        "assert Path(f'boozmn_{ext}.nc').is_file()\n"
+        "Path(f'neo_out.{ext}').write_text("
+        "'2 1e-4 0.2 0.7 2 5\\n5 8e-5 0.3 0.72 2 5\\n8 6e-5 0.4 0.74 2 5\\n')\n",
+    )
+    result, run, outputs = run_neo_solver(
+        wout,
+        tmp_path / "neo_run",
+        boozmn=boozmn,
+        executable=executable,
+    )
+    assert run.returncode == 0
+    assert result.summary()["surface_count"] == 3
+    assert all(path.is_file() for path in outputs)
+
+
+def test_run_cobra_solver_with_fake_executable(tmp_path: Path):
+    wout = tmp_path / "wout_case.nc"
+    xr.Dataset({"ns": xr.DataArray(9)}).to_netcdf(wout)
+    executable = _write_executable(
+        tmp_path / "xcobravmec",
+        "from pathlib import Path\n"
+        "import sys\n"
+        "input_path = Path(sys.argv[1])\n"
+        "assert input_path.is_file() and sys.argv[2] == 'F'\n"
+        "ext = input_path.name.split('.', 1)[1]\n"
+        "Path(f'cobra_grate.{ext}').write_text("
+        "'0 0 3\\n2 -0.1\\n5 -0.2\\n8 0.05\\n')\n",
+    )
+    result, run, outputs = run_cobra_solver(
+        wout,
+        tmp_path / "cobra_run",
+        executable=executable,
+        surface_indices=[2, 5, 8],
+        ntheta=1,
+        nzeta=1,
+    )
+    assert run.returncode == 0
+    assert result.summary()["minimum_eigenvalue"] == -0.2
+    assert all(path.is_file() for path in outputs)
+
+
+def test_missing_solver_executable_is_explicit(tmp_path: Path):
+    wout = tmp_path / "wout_case.nc"
+    xr.Dataset({"ns": xr.DataArray(9)}).to_netcdf(wout)
+    try:
+        run_cobra_solver(wout, tmp_path / "out", executable="definitely-not-xcobra")
+    except SolverDependencyError as exc:
+        assert "Source STELLOPT.sh" in str(exc)
+    else:
+        raise AssertionError("missing executable should raise SolverDependencyError")
