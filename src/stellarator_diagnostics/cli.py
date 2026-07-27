@@ -27,6 +27,8 @@ def _parser():
     p.add_argument("--family-index", type=int, default=-1)
     p.add_argument("--surface", type=float, default=1.0)
     p.add_argument("--boozmn", help="Optional BOOZ_XFORM boozmn NetCDF")
+    p.add_argument("--mboz", type=int, help="Override automatically inferred BOOZ_XFORM m")
+    p.add_argument("--nboz", type=int, help="Override automatically inferred BOOZ_XFORM n")
     p.add_argument("--neo-out", help="Optional STELLOPT NEO neo_out file")
     p.add_argument("--dkes-results", help="Optional STELLOPT DKES results file")
     p.add_argument("--cobra-grate", help="Optional COBRAVMEC cobra_grate file")
@@ -97,6 +99,8 @@ def main(argv=None):
             neo_out=args.neo_out,
             dkes_results=args.dkes_results,
             cobra_grate=args.cobra_grate,
+            mboz=args.mboz,
+            nboz=args.nboz,
         )
         print(report)
         for warning in eq.warnings:
