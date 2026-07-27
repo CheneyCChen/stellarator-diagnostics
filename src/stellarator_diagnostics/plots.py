@@ -166,8 +166,60 @@ def plot_mercier_terms(eq: EquilibriumData, path: str | Path, analysis_min_s: fl
 
 
 def plot_stability(eq: EquilibriumData, path: str | Path, analysis_min_s: float = 0.05):
-    """Backward-compatible alias for the total Mercier plot."""
-    return plot_mercier_total(eq, path, analysis_min_s=analysis_min_s)
+    """Plot total Mercier stability and its four terms in one two-panel figure.
+
+    VMEC's total Mercier criterion is stable for ``D_Mercier > 0``.  The
+    green/red background therefore belongs only to the total-criterion panel;
+    individual decomposition terms are not independent stability criteria.
+    """
+    if "D_Mercier" not in eq.stability:
+        return None
+    term_names = ("D_shear", "D_well", "D_current", "D_geodesic")
+    available_terms = [name for name in term_names if name in eq.stability]
+    with plt.rc_context(STYLE):
+        fig, (ax_total, ax_terms) = plt.subplots(
+            2,
+            1,
+            figsize=(7.6, 7.6),
+            sharex=True,
+            constrained_layout=True,
+        )
+        ymin, ymax = -4.0, 4.0
+        ax_total.axhspan(0, ymax, color="#d8f0d2", alpha=0.72, label="Mercier stable")
+        ax_total.axhspan(ymin, 0, color="#f5d0cd", alpha=0.72, label="Mercier unstable")
+        s, value = eq.stability["D_Mercier"]
+        mask = s >= analysis_min_s
+        ax_total.plot(
+            s[mask],
+            value[mask],
+            color="black",
+            lw=1.9,
+            label=r"$D_{\rm Mercier}$",
+            zorder=3,
+        )
+        ax_total.axhline(0, color="0.35", lw=0.9, zorder=2)
+        ax_total.set_xlim(analysis_min_s, 1)
+        ax_total.set_ylim(ymin, ymax)
+        ax_total.set_ylabel(r"$D_{\rm Mercier}$")
+        ax_total.set_title("Total Mercier stability criterion")
+        ax_total.legend(ncols=3, fontsize=8, loc="upper center")
+        _minor_ticks(ax_total)
+
+        for name in available_terms:
+            s, value = eq.stability[name]
+            mask = s >= analysis_min_s
+            ax_terms.plot(s[mask], value[mask], lw=1.7, label=name)
+        ax_terms.axhline(0, color="black", lw=0.8)
+        ax_terms.set_xlim(analysis_min_s, 1)
+        ax_terms.set_ylim(ymin, ymax)
+        ax_terms.set_xlabel(r"Normalized toroidal flux $s$")
+        ax_terms.set_ylabel("Mercier contribution")
+        ax_terms.set_title("Mercier decomposition")
+        if available_terms:
+            ax_terms.legend(ncols=2, fontsize=8)
+        _minor_ticks(ax_terms)
+        fig.suptitle(rf"Mercier stability ($s\geq{analysis_min_s:g}$)", fontsize=12)
+        return _save(fig, path)
 
 
 def plot_cross_sections(
