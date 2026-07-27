@@ -10,10 +10,12 @@
 - 标量摘要：长宽比、体积、主/副半径、磁场、beta、电流、收敛残差；
 - 剖面：iota、压力、磁剪切、电流、`dV/ds`；
 - 自动定位分母不超过 12 的低阶有理面，并写入 JSON；
-- 磁井：VMEC `vp`（或 `gmnc(0,0)`）边界外推定义；
-- Mercier：`D_Mercier` 及 shear/well/current/geodesic 分项，排除轴附近后的
-  最小值和负值占比；
+- 磁井：绘制径向剖面 $[V'(0)-V'(s)]/V'(0)$，并以边界值
+  $[V'(0)-V'(1)]/V'(0)$ 作为标量摘要；
+- Mercier：总 `D_Mercier` 与 shear/well/current/geodesic 四个分项分别成图，
+  并报告排除轴附近后的最小值和负值占比；
 - 几何：依据 `NFP` 在半个场周期内绘制四个环向截面，每个截面含 9 个闭合磁面；
+- 边界：额外将多个不同环向角的闭合边界叠加在同一张图中；
 - 磁场：VMEC/DESC 原生角坐标下 `|B|`，以及多个 `s` 位置的无填充
   BOOZ_XFORM Boozer 等值线；
 - 三维完整环面以 `|B|` 为表面颜色；
@@ -47,7 +49,7 @@ pip install -e ".[desc]"
 ## 最常用命令
 
 ```bash
-# 单个 VMEC 或 DESC 文件的完整报告
+# 单个 VMEC 的完整报告会自动执行 BOOZ_XFORM
 stell-diag analyze wout_case.nc -o diagnostics/case
 stell-diag analyze eqfam_case.h5 -o diagnostics/desc --family-index -1
 
@@ -69,8 +71,12 @@ stell-diag xboozer wout_case.nc -o boozmn_case.nc \
 stell-diag boozer boozmn_case.nc \
   --surfaces 0.15 0.30 0.45 0.60 0.75 0.90 1.0 -o boozer_surfaces
 
-# 将 Boozer 图并入完整报告
+# 也可直接使用已有 boozmn，跳过自动变换
 stell-diag analyze wout_case.nc --boozmn boozmn_case.nc -o diagnostics/case
+
+# 自动分辨率默认取 wout 的 xm_nyq 与 xn_nyq/NFP 最大模数；
+# 如确有需要，也可显式覆盖
+stell-diag analyze wout_case.nc -o diagnostics/case --mboz 32 --nboz 32
 
 # 单独分析已经计算好的 NEO、DKES、COBRA 输出
 stell-diag neo neo_out.case -o diagnostics/neo
@@ -91,8 +97,10 @@ summary.csv              单行标量摘要
 diagnostics.json         完整机器可读结果
 profiles.png             径向剖面
 iota.png                 iota 与 NFP 允许的低阶有理面
-stability.png            Mercier 及分项
+mercier_total.png        总 D_Mercier
+mercier_terms.png        shear/well/current/geodesic 四个 Mercier 分项
 cross_sections.png       多磁面截面
+boundary_angles.png      不同环向角边界叠加图
 fieldline_traces.png     多条磁力线上的 |B|
 fieldline_long.png       一条磁力线连续 200 个场周期的 |B|
 surface_3d.png           以 |B| 着色的完整三维磁面
@@ -136,19 +144,20 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
    `s=rho²`。
 2. VMEC 的全网格与半网格不会混用。`bmnc`、Mercier 分项和部分剖面使用
    半网格插值。
-3. 磁井标量使用
+3. 磁井剖面与标量使用
 
    \[
    W = \frac{V'(0)-V'(1)}{V'(0)}.
    \]
 
-   优先读取 `vp`；缺失时从 `4π²|gmnc_{00}|` 得到 `V'(s)`。半网格端点使用
-   线性外推。
+   径向图使用 $W(s)=[V'(0)-V'(s)]/V'(0)$，标量摘要取 $W(1)$。优先读取
+   `vp`；缺失时从 `4π²|gmnc_{00}|` 得到 `V'(s)`。半网格端点使用线性外推。
 4. `D_Mercier` 轴上常受坐标奇性/离散误差影响，摘要默认报告 `s≥0.05`
    区域的最小值；论文图只展示此分析区，并将纵轴固定为 `[-4,4]`。
-5. `wout` 中的角度是 VMEC 角，不是 Boozer 角。程序不会把 VMEC
-   `theta-zeta` 图放入默认报告或误标为 Boozer 图；Boozer 图只由成熟
-   `booz_xform` 或 STELLOPT `xbooz_xform` 产生的 `boozmn` 生成。
+5. `wout` 中的角度是 VMEC 角，不是 Boozer 角。`analyze` 会自动调用成熟
+   `booz_xform`，其 `mboz/nboz` 默认由 `xm_nyq` 与 `xn_nyq/NFP` 的实际
+   最大模数决定；若依赖不可用会明确警告而不会伪造 Boozer 图。传入
+   `--boozmn` 可直接读取已有结果并跳过变换。
 6. VMEC 和 DESC 的同名稳定性量可能采用不同归一化。比较符号和径向结构前，
    应先核对版本与定义；本工具不擅自重标定。
 7. NEO、DKES、COBRA 是独立求解器。本包负责可靠读取、质量诊断和统一绘图，
