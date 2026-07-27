@@ -183,8 +183,23 @@ class VmecAdapter:
         vp = get("vp")
         if vp is not None:
             v = np.ravel(np.asarray(vp, dtype=float))
-            v0, v1 = edge_extrapolate(v[1:] if len(v) == self.ns else v)
+            v_for_well = v[1:] if len(v) == self.ns else v
+            v0, v1 = edge_extrapolate(v_for_well)
             scalars["magnetic_well"] = (v0 - v1) / v0 if v0 != 0 else np.nan
+            s_v = self._profile_grid(len(v_for_well), half=True)
+            valid = s_v >= 0
+            profiles["magnetic_well"] = (
+                np.concatenate(([0.0], s_v[valid], [1.0])),
+                np.concatenate(
+                    (
+                        [0.0],
+                        (v0 - v_for_well[valid]) / v0
+                        if v0 != 0
+                        else np.full(np.count_nonzero(valid), np.nan),
+                        [(v0 - v1) / v0 if v0 != 0 else np.nan],
+                    )
+                ),
+            )
         elif get("gmnc") is not None:
             gmnc = np.asarray(get("gmnc"), dtype=float)
             if gmnc.shape[0] != self.ns and gmnc.shape[1] == self.ns:
@@ -192,6 +207,20 @@ class VmecAdapter:
             dVds = 4 * np.pi**2 * np.abs(gmnc[1:, 0])
             v0, v1 = edge_extrapolate(dVds)
             scalars["magnetic_well"] = (v0 - v1) / v0 if v0 != 0 else np.nan
+            s_v = self._profile_grid(len(dVds), half=True)
+            valid = s_v >= 0
+            profiles["magnetic_well"] = (
+                np.concatenate(([0.0], s_v[valid], [1.0])),
+                np.concatenate(
+                    (
+                        [0.0],
+                        (v0 - dVds[valid]) / v0
+                        if v0 != 0
+                        else np.full(np.count_nonzero(valid), np.nan),
+                        [(v0 - v1) / v0 if v0 != 0 else np.nan],
+                    )
+                ),
+            )
 
         stability = {}
         for out_name, vmec_names in STABILITY_NAMES.items():
@@ -224,6 +253,7 @@ class VmecAdapter:
                 "pressure": "Pa",
                 "toroidal_current": "A/m²",
                 "dV_ds": "m³",
+                "magnetic_well": "dimensionless",
             },
             stability=stability,
             metadata={
