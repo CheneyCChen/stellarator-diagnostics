@@ -28,6 +28,8 @@
   及相对收敛带；
 - COBRAVMEC `cobra_grate`：各磁力线的无限-$n$ 理想气球模本征值及径向包络，
   并按官方约定标出负本征值不稳定区；
+- 求解器调用：在已配置 STELLOPT 的环境中直接运行 `xneo` 和
+  `xcobravmec`，自动生成官方输入文件、隔离运行目录、日志、运行记录和诊断图；
 - 大批文件扫描，单个坏文件不会终止整个任务；
 - Python API 与 `stell-diag` CLI。
 
@@ -84,6 +86,24 @@ stell-diag neo neo_out.case -o diagnostics/neo
 stell-diag dkes results.case -o diagnostics/dkes
 stell-diag cobra cobra_grate.case -o diagnostics/cobra
 
+# 真正运行 NEO；若不传 --boozmn，会先按 wout 实际 Nyquist 分辨率运行 BOOZ_XFORM
+stell-diag run-neo wout_case.nc -o runs/neo
+
+# 使用已有 Boozer 文件并只计算指定 VMEC surface indices
+stell-diag run-neo wout_case.nc --boozmn boozmn_case.nc \
+  --surface-indices 19 38 57 76 95 114 126 -o runs/neo
+
+# 真正运行 COBRAVMEC v4.1；默认 5×5 起始角、16 个径向面
+stell-diag run-cobra wout_case.nc -o runs/cobra
+
+# 更密的 field-line scan，并显式选择 VMEC surface indices
+stell-diag run-cobra wout_case.nc --ntheta 12 --nzeta 12 \
+  --surface-indices 10 20 30 40 50 60 70 80 90 100 110 120 -o runs/cobra
+
+# 若可执行文件不在 PATH 中
+stell-diag run-neo wout_case.nc --executable /path/to/xneo -o runs/neo
+stell-diag run-cobra wout_case.nc --executable /path/to/xcobravmec -o runs/cobra
+
 # 全部并入同一份 VMEC 报告
 stell-diag analyze wout_case.nc -o diagnostics/case \
   --boozmn boozmn_case.nc --neo-out neo_out.case \
@@ -112,6 +132,24 @@ dkes/dkes_convergence.png
 cobra/cobra_ballooning.png
 {neo,dkes,cobra}/*_normalized.csv
 <quantity>.csv           各剖面的原始数据
+```
+
+`run-neo` 与 `run-cobra` 使用以下目录结构：
+
+```text
+neo_run/
+├── run/                 求解器输入、复制的平衡文件、原始输出和 stdout/stderr
+│   ├── neo_in.<case>
+│   ├── neo_out.<case>
+│   └── neo_run.json
+└── diagnostics/         解析后的 CSV 与图片
+
+cobra_run/
+├── run/
+│   ├── in_cobra.<case>
+│   ├── cobra_grate.<case>
+│   └── cobravmec_run.json
+└── diagnostics/
 ```
 
 ## Python API
@@ -161,8 +199,24 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
 6. VMEC 和 DESC 的同名稳定性量可能采用不同归一化。比较符号和径向结构前，
    应先核对版本与定义；本工具不擅自重标定。
 7. NEO、DKES、COBRA 是独立求解器。本包负责可靠读取、质量诊断和统一绘图，
-   不把 `wout` 后处理值冒充它们的计算结果。NEO 需要 `boozmn`；DKES 使用
-   Boozer/直线磁力线坐标输入；COBRAVMEC 直接基于 VMEC 平衡。
+   不把 `wout` 后处理值冒充它们的计算结果。`run-neo` 会调用真实 `xneo`，
+   `run-cobra` 会调用真实 `xcobravmec`；任何非零退出码、超时或缺失输出都会
+   作为失败报告。NEO 需要 `boozmn`；DKES 使用 Boozer/直线磁力线坐标输入；
+   COBRAVMEC 直接基于 VMEC 平衡。
+
+## STELLOPT 运行环境
+
+调用功能不会自行编译 STELLOPT。运行前需要让对应可执行文件进入 `PATH`：
+
+```bash
+source /path/to/STELLOPT.sh
+command -v xneo
+command -v xcobravmec
+```
+
+如果 `command -v` 没有输出，可通过 `--executable` 传入绝对路径。NEO 输入采用
+官方 standalone text-control 格式；COBRAVMEC 输入采用支持非恒星器对称平衡的
+v4.1 九行格式。所有角度以该格式要求的 degree 写入。
 
 ## DESC 兼容性
 
