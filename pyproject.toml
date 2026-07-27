@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stellarator-diagnostics"
+version = "0.3.0"
+description = "Unified, batch-friendly diagnostics for VMEC and DESC equilibria"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "Chen Chen"}]
+dependencies = [
+  "numpy>=1.24",
+  "scipy>=1.10",
+  "xarray>=2023.12",
+  "netCDF4>=1.6",
+  "matplotlib>=3.7",
+  "pandas>=2.0",
+]
+
+[project.optional-dependencies]
+desc = ["desc-opt>=0.13"]
+interactive = ["plotly>=5.20"]
+boozer = ["booz_xform>=0.0.9"]
+dev = ["pytest>=8", "ruff>=0.5"]
+all = ["desc-opt>=0.13", "plotly>=5.20", "booz_xform>=0.0.9"]
+
+[project.scripts]
+stell-diag = "stellarator_diagnostics.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# Optional DESC quantities and independent report panels are intentionally
+# isolated so one unavailable diagnostic never aborts a full batch.
+ignore = ["BLE001", "S112"]
