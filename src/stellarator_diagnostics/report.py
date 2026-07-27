@@ -19,8 +19,7 @@ from .plots import (
     plot_iota,
     plot_long_fieldline_trace,
     plot_profiles,
-    plot_mercier_terms,
-    plot_mercier_total,
+    plot_stability,
     plot_surface_3d,
 )
 
@@ -64,12 +63,8 @@ def write_report(
         ("iota", lambda: plot_iota(eq, outdir / "iota.png")),
         ("profiles", lambda: plot_profiles(eq, outdir / "profiles.png")),
         (
-            "mercier_total",
-            lambda: plot_mercier_total(eq, outdir / "mercier_total.png"),
-        ),
-        (
-            "mercier_terms",
-            lambda: plot_mercier_terms(eq, outdir / "mercier_terms.png"),
+            "mercier_stability",
+            lambda: plot_stability(eq, outdir / "mercier_stability.png"),
         ),
         ("cross_sections", lambda: plot_cross_sections(eq, outdir / "cross_sections.png")),
         (
