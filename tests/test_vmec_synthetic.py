@@ -4,6 +4,12 @@ import numpy as np
 import xarray as xr
 
 from stellarator_diagnostics.readers import load_equilibrium
+from stellarator_diagnostics.plots import (
+    plot_boundary_angles,
+    plot_mercier_terms,
+    plot_mercier_total,
+    plot_profiles,
+)
 
 
 def make_wout(path: Path):
@@ -30,6 +36,10 @@ def make_wout(path: Path):
             "presf": ("rad", np.linspace(1e5, 0, ns)),
             "vp": ("rad", np.linspace(10, 8, ns)),
             "DMerc": ("rad", np.linspace(-0.1, 0.2, ns)),
+            "DShear": ("rad", np.linspace(-0.2, 0.1, ns)),
+            "DWell": ("rad", np.linspace(0.1, 0.3, ns)),
+            "DCurr": ("rad", np.linspace(-0.05, 0.05, ns)),
+            "DGeod": ("rad", np.linspace(-0.1, -0.02, ns)),
             "xm": ("mn", [0, 1, 1]),
             "xn": ("mn", [0, 0, 4]),
             "xm_nyq": ("mn_nyq", [0, 1]),
@@ -50,6 +60,17 @@ def test_vmec_reader_and_geometry(tmp_path):
     assert eq.nfp == 4
     assert np.isclose(eq.scalars["iota_edge"], 0.78)
     assert np.isfinite(eq.scalars["magnetic_well"])
+    s_well, well = eq.profiles["magnetic_well"]
+    assert np.allclose(s_well[[0, -1]], [0, 1])
+    assert np.isclose(well[0], 0)
+    assert np.isclose(well[-1], eq.scalars["magnetic_well"])
+    assert set(eq.stability) == {
+        "D_Mercier",
+        "D_shear",
+        "D_well",
+        "D_current",
+        "D_geodesic",
+    }
     surf = eq.surface(s=1, ntheta=16, nphi=12)
     assert surf.R.shape == (16, 12)
     section = eq.section(s=1, phi=np.pi / 8, ntheta=65)
@@ -58,3 +79,10 @@ def test_vmec_reader_and_geometry(tmp_path):
     field = eq.field_map(s=0.5, ntheta=10, nzeta=8)
     assert field.values.shape == (10, 8)
     assert np.isclose(field.values.mean(), 2.0, atol=1e-12)
+    outputs = [
+        plot_profiles(eq, tmp_path / "profiles.png"),
+        plot_boundary_angles(eq, tmp_path / "boundary_angles.png"),
+        plot_mercier_total(eq, tmp_path / "mercier_total.png"),
+        plot_mercier_terms(eq, tmp_path / "mercier_terms.png"),
+    ]
+    assert all(output.stat().st_size > 10_000 for output in outputs)
