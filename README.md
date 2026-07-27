@@ -12,8 +12,9 @@
 - 自动定位分母不超过 12 的低阶有理面，并写入 JSON；
 - 磁井：绘制径向剖面 $[V'(0)-V'(s)]/V'(0)$，并以边界值
   $[V'(0)-V'(1)]/V'(0)$ 作为标量摘要；
-- Mercier：总 `D_Mercier` 与 shear/well/current/geodesic 四个分项分别成图，
-  并报告排除轴附近后的最小值和负值占比；
+- Mercier：一张图的上下子图分别绘制总 `D_Mercier` 和
+  shear/well/current/geodesic 四个分项；总判据子图以绿色和红色背景分别标出
+  稳定区与不稳定区；
 - 几何：依据 `NFP` 在半个场周期内绘制四个环向截面，每个截面含 9 个闭合磁面；
 - 边界：额外将多个不同环向角的闭合边界叠加在同一张图中；
 - 磁场：VMEC/DESC 原生角坐标下 `|B|`，以及多个 `s` 位置的无填充
@@ -97,8 +98,7 @@ summary.csv              单行标量摘要
 diagnostics.json         完整机器可读结果
 profiles.png             径向剖面
 iota.png                 iota 与 NFP 允许的低阶有理面
-mercier_total.png        总 D_Mercier
-mercier_terms.png        shear/well/current/geodesic 四个 Mercier 分项
+mercier_stability.png    总 D_Mercier（稳定/不稳定区着色）与四个分项
 cross_sections.png       多磁面截面
 boundary_angles.png      不同环向角边界叠加图
 fieldline_traces.png     多条磁力线上的 |B|
