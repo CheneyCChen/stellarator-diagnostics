@@ -48,7 +48,11 @@ def _minor_ticks(ax):
 
 
 def plot_profiles(eq: EquilibriumData, path: str | Path):
-    names = [n for n in ("pressure", "dV_ds", "current", "shear") if n in eq.profiles]
+    names = [
+        n
+        for n in ("pressure", "dV_ds", "magnetic_well", "current", "shear")
+        if n in eq.profiles
+    ]
     if not names:
         return None
     with plt.rc_context(STYLE):
@@ -58,7 +62,11 @@ def plot_profiles(eq: EquilibriumData, path: str | Path):
             s, value = eq.profiles[name]
             ax.plot(s, value, color="black", lw=1.8)
             unit = eq.profile_units.get(name, "")
-            ax.set_ylabel(f"{name}" + (f" [{unit}]" if unit else ""))
+            if name == "magnetic_well":
+                ax.axhline(0, color="0.5", lw=0.8)
+                ax.set_ylabel(r"$[V'(0)-V'(s)]/V'(0)$")
+            else:
+                ax.set_ylabel(f"{name}" + (f" [{unit}]" if unit else ""))
             _minor_ticks(ax)
         axes[-1].set_xlabel(r"Normalized toroidal flux $s$")
         fig.suptitle("Radial profiles")
@@ -115,12 +123,35 @@ def plot_iota(eq: EquilibriumData, path: str | Path):
         return _save(fig, path)
 
 
-def plot_stability(eq: EquilibriumData, path: str | Path, analysis_min_s: float = 0.05):
-    if not eq.stability:
+def plot_mercier_total(eq: EquilibriumData, path: str | Path, analysis_min_s: float = 0.05):
+    """Plot total Mercier criterion separately from its decomposition."""
+    if "D_Mercier" not in eq.stability:
+        return None
+    s, value = eq.stability["D_Mercier"]
+    mask = s >= analysis_min_s
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(7.4, 4.8))
+        ax.plot(s[mask], value[mask], color="black", lw=1.9, label=r"$D_{\rm Mercier}$")
+        ax.axhline(0, color="0.45", lw=0.8)
+        ax.set_xlim(analysis_min_s, 1)
+        ax.set_ylim(-4, 4)
+        ax.set_xlabel(r"Normalized toroidal flux $s$")
+        ax.set_ylabel(r"$D_{\rm Mercier}$")
+        ax.set_title(rf"Mercier stability criterion ($s\geq{analysis_min_s:g}$)")
+        _minor_ticks(ax)
+        return _save(fig, path)
+
+
+def plot_mercier_terms(eq: EquilibriumData, path: str | Path, analysis_min_s: float = 0.05):
+    """Plot the four VMEC Mercier contributions without the total."""
+    names = ("D_shear", "D_well", "D_current", "D_geodesic")
+    available = [name for name in names if name in eq.stability]
+    if not available:
         return None
     with plt.rc_context(STYLE):
         fig, ax = plt.subplots(figsize=(7.4, 4.8))
-        for name, (s, value) in eq.stability.items():
+        for name in available:
+            s, value = eq.stability[name]
             mask = s >= analysis_min_s
             ax.plot(s[mask], value[mask], lw=1.7, label=name)
         ax.axhline(0, color="black", lw=0.8)
@@ -128,10 +159,15 @@ def plot_stability(eq: EquilibriumData, path: str | Path, analysis_min_s: float 
         ax.set_ylim(-4, 4)
         ax.set_xlabel(r"Normalized toroidal flux $s$")
         ax.set_ylabel("Mercier contribution")
-        ax.set_title(rf"Mercier stability terms ($s\geq{analysis_min_s:g}$)")
+        ax.set_title(rf"Mercier decomposition ($s\geq{analysis_min_s:g}$)")
         ax.legend(ncols=2, fontsize=8)
         _minor_ticks(ax)
         return _save(fig, path)
+
+
+def plot_stability(eq: EquilibriumData, path: str | Path, analysis_min_s: float = 0.05):
+    """Backward-compatible alias for the total Mercier plot."""
+    return plot_mercier_total(eq, path, analysis_min_s=analysis_min_s)
 
 
 def plot_cross_sections(
@@ -179,6 +215,34 @@ def plot_cross_sections(
             rf"($N_{{\rm FP}}={eq.nfp}$)",
             fontsize=12,
         )
+        return _save(fig, path)
+
+
+def plot_boundary_angles(
+    eq: EquilibriumData,
+    path: str | Path,
+    toroidal_angles=None,
+):
+    """Overlay closed plasma-boundary sections at several toroidal angles."""
+    if toroidal_angles is None:
+        toroidal_angles = (0.0, 1 / 8, 1 / 4, 3 / 8, 1 / 2)
+    colors = plt.get_cmap("viridis")(np.linspace(0.05, 0.95, len(toroidal_angles)))
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(7.2, 6.2))
+        for frac, color in zip(toroidal_angles, colors):
+            phi = frac * 2 * np.pi / eq.nfp
+            section = eq.section(s=1.0, phi=phi, ntheta=721)
+            r = np.asarray(section.R[:, 0], dtype=float).copy()
+            z = np.asarray(section.Z[:, 0], dtype=float).copy()
+            r[-1], z[-1] = r[0], z[0]
+            degrees = frac * 360 / eq.nfp
+            ax.plot(r, z, color=color, lw=1.7, label=rf"$\phi={degrees:g}^\circ$")
+        ax.set_aspect("equal")
+        ax.set_xlabel(r"$R$ [m]")
+        ax.set_ylabel(r"$Z$ [m]")
+        ax.set_title(rf"Boundary sections at different toroidal angles ($N_{{\rm FP}}={eq.nfp}$)")
+        ax.legend(ncols=2, fontsize=9)
+        _minor_ticks(ax)
         return _save(fig, path)
 
 
