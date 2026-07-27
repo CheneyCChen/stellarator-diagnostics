@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .boozer import infer_boozer_resolution, run_booz_xform
 from .plots import plot_comparison
 from .readers import load_equilibrium
 from .report import write_report
@@ -21,9 +22,32 @@ def analyze(
     neo_out=None,
     dkes_results=None,
     cobra_grate=None,
+    mboz=None,
+    nboz=None,
 ):
     eq = load_equilibrium(path, backend=backend, family_index=family_index)
     outdir = Path(outdir or f"diagnostics_{eq.label}")
+    outdir.mkdir(parents=True, exist_ok=True)
+    if boozmn is None and eq.backend == "VMEC":
+        generated = outdir / f"boozmn_{eq.label}.nc"
+        try:
+            inferred_mboz, inferred_nboz = infer_boozer_resolution(path)
+            actual_mboz = inferred_mboz if mboz is None else int(mboz)
+            actual_nboz = inferred_nboz if nboz is None else int(nboz)
+            boozmn = run_booz_xform(
+                path,
+                generated,
+                mboz=actual_mboz,
+                nboz=actual_nboz,
+            )
+            eq.metadata["boozer_mboz"] = actual_mboz
+            eq.metadata["boozer_nboz"] = actual_nboz
+            eq.metadata["boozmn"] = str(boozmn)
+        except (ImportError, KeyError, RuntimeError, OSError, ValueError) as exc:
+            eq.warnings.append(
+                "automatic Boozer transform skipped: "
+                f"{type(exc).__name__}: {exc}"
+            )
     report = write_report(
         eq,
         outdir,
