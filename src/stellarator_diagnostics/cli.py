@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+from dataclasses import asdict
 
 from .api import analyze, compare, scan
 from .boozer import run_booz_xform
 from .external import diagnose_cobra, diagnose_dkes, diagnose_neo
 from .plots import plot_boozer_surface_files
 from .readers import load_equilibrium
+from .runners import run_cobra_solver, run_neo_solver
 
 
 def _parser():
@@ -80,6 +82,38 @@ def _parser():
     p.add_argument("file")
     p.add_argument("-o", "--outdir", default="cobra_diagnostics")
 
+    p = sub.add_parser("run-neo", help="Run STELLOPT xneo and diagnose its output")
+    p.add_argument("wout")
+    p.add_argument("-o", "--outdir", default="neo_run")
+    p.add_argument("--boozmn", help="Existing boozmn; otherwise run BOOZ_XFORM")
+    p.add_argument("--executable", default="xneo")
+    p.add_argument("--surface-indices", type=int, nargs="+")
+    p.add_argument("--mboz", type=int)
+    p.add_argument("--nboz", type=int)
+    p.add_argument("--theta-n", type=int, default=200)
+    p.add_argument("--phi-n", type=int, default=200)
+    p.add_argument("--npart", type=int, default=75)
+    p.add_argument("--multra", type=int, default=1)
+    p.add_argument("--accuracy", type=float, default=0.01)
+    p.add_argument("--nstep-min", type=int, default=500)
+    p.add_argument("--nstep-max", type=int, default=5000)
+    p.add_argument("--timeout", type=float, default=3600)
+
+    p = sub.add_parser(
+        "run-cobra",
+        help="Run STELLOPT COBRAVMEC v4.1 and diagnose its output",
+    )
+    p.add_argument("wout")
+    p.add_argument("-o", "--outdir", default="cobra_run")
+    p.add_argument("--executable", default="xcobravmec")
+    p.add_argument("--surface-indices", type=int, nargs="+")
+    p.add_argument("--nsurfaces", type=int, default=16)
+    p.add_argument("--ntheta", type=int, default=5)
+    p.add_argument("--nzeta", type=int, default=5)
+    p.add_argument("--k-w", type=int, default=10)
+    p.add_argument("--kth", type=int, default=0)
+    p.add_argument("--timeout", type=float, default=7200)
+
     p = sub.add_parser("summary", help="Print scalar diagnostics as JSON")
     p.add_argument("file")
     p.add_argument("--backend", choices=["auto", "vmec", "desc"], default="auto")
@@ -138,6 +172,41 @@ def main(argv=None):
         }[args.command]
         result, outputs = diagnostic(args.file, args.outdir)
         print(json.dumps(result.summary(), indent=2, default=str))
+        print("\n".join(str(path) for path in outputs))
+    elif args.command == "run-neo":
+        result, run, outputs = run_neo_solver(
+            args.wout,
+            args.outdir,
+            boozmn=args.boozmn,
+            executable=args.executable,
+            surface_indices=args.surface_indices,
+            mboz=args.mboz,
+            nboz=args.nboz,
+            theta_n=args.theta_n,
+            phi_n=args.phi_n,
+            npart=args.npart,
+            multra=args.multra,
+            accuracy=args.accuracy,
+            nstep_min=args.nstep_min,
+            nstep_max=args.nstep_max,
+            timeout=args.timeout,
+        )
+        print(json.dumps({"run": asdict(run), "summary": result.summary()}, indent=2, default=str))
+        print("\n".join(str(path) for path in outputs))
+    elif args.command == "run-cobra":
+        result, run, outputs = run_cobra_solver(
+            args.wout,
+            args.outdir,
+            executable=args.executable,
+            surface_indices=args.surface_indices,
+            nsurfaces=args.nsurfaces,
+            ntheta=args.ntheta,
+            nzeta=args.nzeta,
+            k_w=args.k_w,
+            kth=args.kth,
+            timeout=args.timeout,
+        )
+        print(json.dumps({"run": asdict(run), "summary": result.summary()}, indent=2, default=str))
         print("\n".join(str(path) for path in outputs))
     elif args.command == "summary":
         eq = load_equilibrium(args.file, backend=args.backend)
