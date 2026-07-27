@@ -169,7 +169,7 @@ def plot_stability(eq: EquilibriumData, path: str | Path, analysis_min_s: float 
     """Plot total Mercier stability and its four terms in one two-panel figure.
 
     VMEC's total Mercier criterion is stable for ``D_Mercier > 0``.  The
-    green/red background therefore belongs only to the total-criterion panel;
+    green/red radial bands therefore belong only to the total-criterion panel;
     individual decomposition terms are not independent stability criteria.
     """
     if "D_Mercier" not in eq.stability:
@@ -185,13 +185,35 @@ def plot_stability(eq: EquilibriumData, path: str | Path, analysis_min_s: float 
             constrained_layout=True,
         )
         ymin, ymax = -4.0, 4.0
-        ax_total.axhspan(0, ymax, color="#d8f0d2", alpha=0.72, label="Mercier stable")
-        ax_total.axhspan(ymin, 0, color="#f5d0cd", alpha=0.72, label="Mercier unstable")
         s, value = eq.stability["D_Mercier"]
         mask = s >= analysis_min_s
+        s_plot = s[mask]
+        value_plot = value[mask]
+        ax_total.fill_between(
+            s_plot,
+            ymin,
+            ymax,
+            where=value_plot >= 0,
+            interpolate=True,
+            color="#d8f0d2",
+            alpha=0.72,
+            label=r"Stable: $D_{\rm Mercier}>0$",
+            zorder=1,
+        )
+        ax_total.fill_between(
+            s_plot,
+            ymin,
+            ymax,
+            where=value_plot < 0,
+            interpolate=True,
+            color="#f5d0cd",
+            alpha=0.72,
+            label=r"Unstable: $D_{\rm Mercier}<0$",
+            zorder=1,
+        )
         ax_total.plot(
-            s[mask],
-            value[mask],
+            s_plot,
+            value_plot,
             color="black",
             lw=1.9,
             label=r"$D_{\rm Mercier}$",
