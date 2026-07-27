@@ -12,13 +12,15 @@ import pandas as pd
 from .external import diagnose_cobra, diagnose_dkes, diagnose_neo
 from .model import EquilibriumData
 from .plots import (
+    plot_boundary_angles,
     plot_boozer_surface_files,
     plot_cross_sections,
     plot_fieldline_traces,
     plot_iota,
     plot_long_fieldline_trace,
     plot_profiles,
-    plot_stability,
+    plot_mercier_terms,
+    plot_mercier_total,
     plot_surface_3d,
 )
 
@@ -61,8 +63,19 @@ def write_report(
     jobs = [
         ("iota", lambda: plot_iota(eq, outdir / "iota.png")),
         ("profiles", lambda: plot_profiles(eq, outdir / "profiles.png")),
-        ("stability", lambda: plot_stability(eq, outdir / "stability.png")),
+        (
+            "mercier_total",
+            lambda: plot_mercier_total(eq, outdir / "mercier_total.png"),
+        ),
+        (
+            "mercier_terms",
+            lambda: plot_mercier_terms(eq, outdir / "mercier_terms.png"),
+        ),
         ("cross_sections", lambda: plot_cross_sections(eq, outdir / "cross_sections.png")),
+        (
+            "boundary_angles",
+            lambda: plot_boundary_angles(eq, outdir / "boundary_angles.png"),
+        ),
         (
             "fieldline_traces",
             lambda: plot_fieldline_traces(eq, outdir / "fieldline_traces.png", s=surface_s),
