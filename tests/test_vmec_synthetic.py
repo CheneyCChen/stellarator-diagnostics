@@ -6,9 +6,8 @@ import xarray as xr
 from stellarator_diagnostics.readers import load_equilibrium
 from stellarator_diagnostics.plots import (
     plot_boundary_angles,
-    plot_mercier_terms,
-    plot_mercier_total,
     plot_profiles,
+    plot_stability,
 )
 
 
@@ -82,7 +81,6 @@ def test_vmec_reader_and_geometry(tmp_path):
     outputs = [
         plot_profiles(eq, tmp_path / "profiles.png"),
         plot_boundary_angles(eq, tmp_path / "boundary_angles.png"),
-        plot_mercier_total(eq, tmp_path / "mercier_total.png"),
-        plot_mercier_terms(eq, tmp_path / "mercier_terms.png"),
+        plot_stability(eq, tmp_path / "mercier_stability.png"),
     ]
     assert all(output.stat().st_size > 10_000 for output in outputs)
