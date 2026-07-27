@@ -8,6 +8,7 @@ from stellarator_diagnostics.plots import (
     plot_boozer_surface_files,
     plot_boozer_surfaces,
 )
+from stellarator_diagnostics.boozer import infer_boozer_resolution
 from stellarator_diagnostics.vmec import BoozerAdapter
 
 matplotlib.use("Agg")
@@ -43,3 +44,20 @@ def test_boozer_multiple_surface_line_plot(tmp_path):
     outputs = plot_boozer_surface_files(source, tmp_path / "separate", surfaces=[0.25, 0.75])
     assert len(outputs) == 2
     assert all(path.stat().st_size > 10_000 for path in outputs)
+
+
+def test_infer_boozer_resolution_uses_vmec_nyquist_modes(tmp_path):
+    source = tmp_path / "wout_resolution.nc"
+    xr.Dataset(
+        {
+            "nfp": xr.DataArray(4),
+            "mpol": xr.DataArray(9),
+            "ntor": xr.DataArray(9),
+            "xm": ("mn", [0, 8]),
+            "xn": ("mn", [0, 36]),
+            "xm_nyq": ("mn_nyq", [0, 8, 16]),
+            # VMEC xn already contains NFP, hence 64 / 4 = 16.
+            "xn_nyq": ("mn_nyq", [-64, 0, 64]),
+        }
+    ).to_netcdf(source)
+    assert infer_boozer_resolution(source) == (16, 16)
