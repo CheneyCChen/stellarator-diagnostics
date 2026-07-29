@@ -26,8 +26,8 @@
 - NEO `neo_out`：$\epsilon_{\rm eff}^{3/2}$ 与 $\epsilon_{\rm eff}$ 径向诊断；
 - DKES `results`：$L_{11}$、$L_{31}$、$L_{33}$ 单能输运系数、变分上下界
   及相对收敛带；
-- COBRAVMEC `cobra_grate`：各磁力线的无限-$n$ 理想气球模本征值及径向包络，
-  并按官方约定标出负本征值不稳定区；
+- COBRAVMEC `cobra_grate`：各磁力线的无限-$n$ 理想气球模带符号增长率及径向
+  包络；按求解器实际输出约定，正增长率表示不稳定，负增长率表示稳定；
 - 求解器调用：在已配置 STELLOPT 的环境中直接运行 `xneo` 和
   `xcobravmec`，自动生成官方输入文件、隔离运行目录、日志、运行记录和诊断图；
 - 大批文件扫描，单个坏文件不会终止整个任务；
@@ -89,11 +89,12 @@ stell-diag cobra cobra_grate.case -o diagnostics/cobra
 # 真正运行 NEO；若不传 --boozmn，会先按 wout 实际 Nyquist 分辨率运行 BOOZ_XFORM
 stell-diag run-neo wout_case.nc -o runs/neo
 
-# 使用已有 Boozer 文件并只计算指定 VMEC surface indices
+# 使用已有 Boozer 文件并只计算指定 VMEC/BOOZ_XFORM jlist labels；
+# 程序会生成严格匹配该子集的本地 boozmn，避免 NEO 的位置索引与标签错配
 stell-diag run-neo wout_case.nc --boozmn boozmn_case.nc \
   --surface-indices 19 38 57 76 95 114 126 -o runs/neo
 
-# 真正运行 COBRAVMEC v4.1；默认 5×5 起始角、16 个径向面
+# 真正运行 COBRAVMEC v4.1；默认 5×5 起始角、16 个径向面、kth=1（最不稳定模）
 stell-diag run-cobra wout_case.nc -o runs/cobra
 
 # 更密的 field-line scan，并显式选择 VMEC surface indices
@@ -141,6 +142,7 @@ neo_run/
 ├── run/                 求解器输入、复制的平衡文件、原始输出和 stdout/stderr
 │   ├── neo_in.<case>
 │   ├── neo_out.<case>
+│   ├── neo_surface_map.json
 │   └── neo_run.json
 └── diagnostics/         解析后的 CSV 与图片
 
@@ -203,6 +205,13 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
    `run-cobra` 会调用真实 `xcobravmec`；任何非零退出码、超时或缺失输出都会
    作为失败报告。NEO 需要 `boozmn`；DKES 使用 Boozer/直线磁力线坐标输入；
    COBRAVMEC 直接基于 VMEC 平衡。
+8. 当前 STELLOPT NEO 按 `boozmn` 内的位置 `1..N` 计算磁面，同时把控制文件中的
+   surface array 写成输出标签。`run-neo --surface-indices` 因此会先提取严格匹配
+   所选 `jlist` 的本地 `boozmn`，向 NEO 传入位置索引，再在 CSV 中恢复真实标签。
+9. COBRAVMEC 先求原始本征值 $\lambda$，再向 `cobra_grate` 写入带符号增长率：
+   $\lambda<0$ 时写入正的 $\sqrt{-\lambda}$，表示不稳定；稳定分支写入负值。
+   求解器失败哨兵值 `100` 会被标为 `solver_failed` 并使 `run-cobra` 明确失败，
+   不会被计入稳定性统计。
 
 ## STELLOPT 运行环境
 
@@ -241,7 +250,8 @@ DESC 量名会随版本演进。适配器对每一组可选量独立计算：某
 - [STELLOPT DKES](https://princetonuniversity.github.io/STELLOPT/DKES.html)：
   19 列 `results` 输出及变分上下界；
 - [STELLOPT COBRAVMEC](https://princetonuniversity.github.io/STELLOPT/COBRAVMEC)：
-  `cobra_grate` 分块格式及负本征值不稳定约定。
+  `cobra_grate` 分块格式；本项目另按官方源码区分原始负本征值与文件中写出的
+  正增长率。
 
 ## 测试
 
