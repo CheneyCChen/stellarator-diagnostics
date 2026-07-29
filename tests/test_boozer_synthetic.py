@@ -4,11 +4,11 @@ import matplotlib
 import numpy as np
 import xarray as xr
 
+from stellarator_diagnostics.boozer import infer_boozer_resolution
 from stellarator_diagnostics.plots import (
     plot_boozer_surface_files,
     plot_boozer_surfaces,
 )
-from stellarator_diagnostics.boozer import infer_boozer_resolution
 from stellarator_diagnostics.vmec import BoozerAdapter
 
 matplotlib.use("Agg")

@@ -6,9 +6,9 @@ import json
 import shutil
 import subprocess
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import xarray as xr
@@ -62,10 +62,8 @@ def _resolve_executable(requested: str | Path, solver: str) -> Path:
 
 def _case_extension(wout: str | Path) -> str:
     name = Path(wout).name
-    if name.startswith("wout_"):
-        name = name[5:]
-    if name.endswith(".nc"):
-        name = name[:-3]
+    name = name.removeprefix("wout_")
+    name = name.removesuffix(".nc")
     safe = "".join(character if character.isalnum() or character in "._-" else "_" for character in name)
     if not safe:
         raise ValueError(f"Cannot derive a solver extension from {wout}")
@@ -145,7 +143,7 @@ def _run_command(
     return record
 
 
-def _boozmn_surface_indices(boozmn: str | Path) -> list[int]:
+def _boozmn_surface_labels(boozmn: str | Path) -> list[int]:
     with xr.open_dataset(boozmn, decode_cf=False, mask_and_scale=False) as ds:
         if "jlist" in ds:
             values = np.ravel(np.asarray(ds["jlist"].values, dtype=int))
@@ -156,7 +154,67 @@ def _boozmn_surface_indices(boozmn: str | Path) -> list[int]:
             values = np.arange(1, min(shape) + 1, dtype=int)
         else:
             raise ValueError("Cannot determine NEO surfaces from boozmn")
-    return sorted({int(value) for value in values if int(value) > 0})
+    labels = [int(value) for value in values if int(value) > 0]
+    if len(labels) != len(set(labels)):
+        raise ValueError("boozmn surface labels must be unique")
+    return labels
+
+
+def _prepare_neo_boozmn(
+    source: str | Path,
+    destination: str | Path,
+    requested_labels: Sequence[int] | None,
+) -> list[int]:
+    """Copy or subset a boozmn so NEO always computes positional surfaces 1..N.
+
+    Current STELLOPT NEO uses the entries in its surface list as output labels,
+    while indexing the loaded Boozer surfaces by their position.  Preparing a
+    file containing exactly the requested surfaces avoids a silent mismatch
+    between the labels written to ``neo_out`` and the surfaces actually used.
+    """
+    source = Path(source).resolve()
+    destination = Path(destination).resolve()
+    if not source.is_file():
+        raise FileNotFoundError(source)
+
+    available = _boozmn_surface_labels(source)
+    requested = (
+        available
+        if requested_labels is None
+        else [int(value) for value in requested_labels]
+    )
+    if not requested:
+        raise ValueError("NEO requires at least one boozmn surface")
+    if len(requested) != len(set(requested)):
+        raise ValueError("NEO surface indices must be unique")
+    missing = [value for value in requested if value not in set(available)]
+    if missing:
+        raise ValueError(f"NEO surfaces are absent from boozmn jlist: {missing}")
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if requested == available:
+        _copy_as(source, destination)
+        return requested
+
+    with xr.open_dataset(source, decode_cf=False, mask_and_scale=False) as ds:
+        if "jlist" not in ds:
+            raise ValueError(
+                "Cannot safely select NEO surface indices from a boozmn without jlist"
+            )
+        if len(ds["jlist"].dims) != 1:
+            raise ValueError("boozmn jlist must be one-dimensional")
+        radial_dimension = ds["jlist"].dims[0]
+        positions = {label: index for index, label in enumerate(available)}
+        subset = ds.isel(
+            {radial_dimension: [positions[label] for label in requested]}
+        ).load()
+        if "ns_b" in subset and subset["ns_b"].ndim == 0:
+            subset["ns_b"] = xr.DataArray(np.int32(len(requested)))
+
+    temporary = destination.with_name(destination.name + ".tmp")
+    subset.to_netcdf(temporary)
+    temporary.replace(destination)
+    return requested
 
 
 def write_neo_input(
@@ -248,24 +306,36 @@ def run_neo_solver(
     local_booz = workdir / f"boozmn_{extension}.nc"
     if boozmn is None:
         actual_mboz, actual_nboz = infer_boozer_resolution(wout)
+        generated_booz = workdir / f"boozmn_full_{extension}.nc"
         run_booz_xform(
             wout,
-            local_booz,
+            generated_booz,
             mboz=actual_mboz if mboz is None else mboz,
             nboz=actual_nboz if nboz is None else nboz,
         )
     else:
-        _copy_as(boozmn, local_booz)
-    available = _boozmn_surface_indices(local_booz)
-    surfaces = available if surface_indices is None else [int(value) for value in surface_indices]
-    missing = sorted(set(surfaces) - set(available))
-    if missing:
-        raise ValueError(f"NEO surfaces are absent from boozmn jlist: {missing}")
+        generated_booz = Path(boozmn)
+    surface_labels = _prepare_neo_boozmn(
+        generated_booz,
+        local_booz,
+        surface_indices,
+    )
+    surface_positions = list(range(1, len(surface_labels) + 1))
+    (workdir / "neo_surface_map.json").write_text(
+        json.dumps(
+            [
+                {"boozmn_position": position, "surface_label": label}
+                for position, label in zip(surface_positions, surface_labels)
+            ],
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     input_file = write_neo_input(
         workdir / f"neo_in.{extension}",
         local_booz.name,
         f"neo_out.{extension}",
-        surfaces,
+        surface_positions,
         theta_n=theta_n,
         phi_n=phi_n,
         npart=npart,
@@ -284,7 +354,11 @@ def run_neo_solver(
         output_file,
         timeout,
     )
-    result, figures = diagnose_neo(output_file, outdir / "diagnostics")
+    result, figures = diagnose_neo(
+        output_file,
+        outdir / "diagnostics",
+        surface_labels=surface_labels,
+    )
     return result, record, figures
 
 
@@ -309,7 +383,7 @@ def write_cobra_input(
     zeta_degrees: Sequence[float],
     theta_degrees: Sequence[float],
     k_w: int = 10,
-    kth: int = 0,
+    kth: int = 1,
 ) -> Path:
     """Write the COBRAVMEC v4.1 input format from official documentation."""
     surfaces = [int(value) for value in surface_indices]
@@ -317,6 +391,10 @@ def write_cobra_input(
     theta = [float(value) for value in theta_degrees]
     if not surfaces or not zeta or not theta:
         raise ValueError("COBRAVMEC surfaces and starting-angle arrays cannot be empty")
+    if k_w < 1:
+        raise ValueError("COBRAVMEC k_w must be at least 1")
+    if kth < 1:
+        raise ValueError("COBRAVMEC kth is one-based and must be at least 1")
     lines = [
         extension,
         f"{int(k_w)} {int(kth)}",
@@ -342,7 +420,7 @@ def run_cobra_solver(
     ntheta: int = 5,
     nzeta: int = 5,
     k_w: int = 10,
-    kth: int = 0,
+    kth: int = 1,
     timeout: float = 7200,
 ) -> tuple[CobraResult, SolverRun, list[Path]]:
     """Run STELLOPT COBRAVMEC v4.1 and diagnose the verified output."""
@@ -384,4 +462,10 @@ def run_cobra_solver(
         timeout,
     )
     result, figures = diagnose_cobra(output_file, outdir / "diagnostics")
+    failure_count = result.summary()["failure_count"]
+    if failure_count:
+        raise SolverExecutionError(
+            "COBRAVMEC returned its failure sentinel (signed growth rate 100) "
+            f"for {failure_count} point(s). Raw output and diagnostics are retained in {outdir}."
+        )
     return result, record, figures

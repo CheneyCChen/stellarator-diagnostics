@@ -3,12 +3,12 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from stellarator_diagnostics.readers import load_equilibrium
 from stellarator_diagnostics.plots import (
     plot_boundary_angles,
     plot_profiles,
     plot_stability,
 )
+from stellarator_diagnostics.readers import load_equilibrium
 
 
 def make_wout(path: Path):

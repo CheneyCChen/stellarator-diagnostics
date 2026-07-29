@@ -12,8 +12,8 @@ import pandas as pd
 from .external import diagnose_cobra, diagnose_dkes, diagnose_neo
 from .model import EquilibriumData
 from .plots import (
-    plot_boundary_angles,
     plot_boozer_surface_files,
+    plot_boundary_angles,
     plot_cross_sections,
     plot_fieldline_traces,
     plot_iota,

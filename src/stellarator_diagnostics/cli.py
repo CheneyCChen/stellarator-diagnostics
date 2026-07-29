@@ -87,7 +87,12 @@ def _parser():
     p.add_argument("-o", "--outdir", default="neo_run")
     p.add_argument("--boozmn", help="Existing boozmn; otherwise run BOOZ_XFORM")
     p.add_argument("--executable", default="xneo")
-    p.add_argument("--surface-indices", type=int, nargs="+")
+    p.add_argument(
+        "--surface-indices",
+        type=int,
+        nargs="+",
+        help="VMEC/BOOZ_XFORM jlist labels; a matching temporary boozmn subset is created",
+    )
     p.add_argument("--mboz", type=int)
     p.add_argument("--nboz", type=int)
     p.add_argument("--theta-n", type=int, default=200)
@@ -111,7 +116,12 @@ def _parser():
     p.add_argument("--ntheta", type=int, default=5)
     p.add_argument("--nzeta", type=int, default=5)
     p.add_argument("--k-w", type=int, default=10)
-    p.add_argument("--kth", type=int, default=0)
+    p.add_argument(
+        "--kth",
+        type=int,
+        default=1,
+        help="One-based ballooning mode label (1 = most unstable)",
+    )
     p.add_argument("--timeout", type=float, default=7200)
 
     p = sub.add_parser("summary", help="Print scalar diagnostics as JSON")

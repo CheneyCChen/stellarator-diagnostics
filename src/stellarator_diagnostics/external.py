@@ -57,27 +57,35 @@ class CobraResult:
     normalized_s: bool
 
     def summary(self):
-        rates = self.data["growth_rate"].to_numpy(float)
-        if np.any(np.isfinite(rates)):
-            worst_index = int(np.nanargmin(rates))
-            worst = self.data.iloc[worst_index]
-            minimum = float(worst["growth_rate"])
+        valid = self.data[
+            ~self.data["solver_failed"] & np.isfinite(self.data["growth_rate"])
+        ]
+        rates = valid["growth_rate"].to_numpy(float)
+        if len(valid):
+            worst_index = int(np.nanargmax(rates))
+            worst = valid.iloc[worst_index]
+            maximum = float(worst["growth_rate"])
             worst_s = float(worst["s"])
             worst_zeta = float(worst["zeta0"])
             worst_theta = float(worst["theta0"])
         else:
-            minimum = worst_s = worst_zeta = worst_theta = float("nan")
+            maximum = worst_s = worst_zeta = worst_theta = float("nan")
         return {
             "source": str(self.source),
             "field_line_count": int(self.data.groupby(["zeta0", "theta0"]).ngroups),
             "surface_count": int(self.data["s"].nunique()),
             "normalized_s": self.normalized_s,
-            "minimum_eigenvalue": minimum,
-            "unstable_fraction": float(np.mean(rates < 0)),
+            "valid_point_count": len(valid),
+            "failure_count": int(self.data["solver_failed"].sum()),
+            "maximum_growth_rate": maximum,
+            "unstable_fraction": float(np.mean(rates > 0)) if rates.size else float("nan"),
             "worst_s": worst_s,
             "worst_zeta0": worst_zeta,
             "worst_theta0": worst_theta,
-            "sign_convention": "negative eigenvalue is ideal-ballooning unstable",
+            "sign_convention": (
+                "positive COBRAVMEC signed growth rate is ideal-ballooning unstable; "
+                "negative is stable"
+            ),
         }
 
 
@@ -213,6 +221,11 @@ def read_cobra(path: str | Path):
                     "surface_index": round(surface_index),
                     "s": s,
                     "growth_rate": growth_rate,
+                    # COBRAVMEC sets the full rate vector to 100 before returning
+                    # when its ballooning solve fails.  It is not a physical rate.
+                    "solver_failed": bool(
+                        np.isclose(growth_rate, 100.0, rtol=0.0, atol=1e-8)
+                    ),
                 }
             )
         cursor += surface_count
@@ -302,43 +315,88 @@ def plot_dkes(result: DkesResult, outdir: str | Path):
 
 
 def plot_cobra(result: CobraResult, path: str | Path):
-    """Plot COBRA field-line scans; negative eigenvalues are unstable."""
+    """Plot COBRAVMEC signed growth rates; positive values are unstable."""
     frame = result.data.sort_values(["zeta0", "theta0", "s"])
-    grouped = frame.groupby("s")["growth_rate"]
+    valid = frame[~frame["solver_failed"] & np.isfinite(frame["growth_rate"])]
+    failed = frame[frame["solver_failed"]]
+    grouped = valid.groupby("s")["growth_rate"]
     envelope = grouped.agg(["min", "median", "max"]).reset_index().sort_values("s")
     with plt.rc_context(STYLE):
         fig, ax = plt.subplots(figsize=(7.4, 4.9))
-        for _, group in frame.groupby(["zeta0", "theta0"]):
+        for _, group in valid.groupby(["zeta0", "theta0"]):
             ax.plot(group["s"], group["growth_rate"], color="0.65", lw=0.7, alpha=0.45)
-        ax.fill_between(
-            envelope["s"],
-            envelope["min"],
-            envelope["max"],
-            color="#4c78a8",
-            alpha=0.15,
-            linewidth=0,
-            label="field-line envelope",
-        )
-        ax.plot(envelope["s"], envelope["min"], color="#b13c2e", lw=2, label="minimum")
-        ax.plot(envelope["s"], envelope["median"], color="#1f4e79", lw=1.5, label="median")
+        if not envelope.empty:
+            ax.fill_between(
+                envelope["s"],
+                envelope["min"],
+                envelope["max"],
+                color="#4c78a8",
+                alpha=0.15,
+                linewidth=0,
+                label="field-line envelope",
+            )
+            ax.plot(envelope["s"], envelope["max"], color="#b13c2e", lw=2, label="maximum")
+            ax.plot(
+                envelope["s"],
+                envelope["median"],
+                color="#1f4e79",
+                lw=1.5,
+                label="median",
+            )
+        if not failed.empty:
+            ax.scatter(
+                failed["s"],
+                np.zeros(len(failed)),
+                marker="x",
+                color="#7f0000",
+                s=34,
+                label="solver failure",
+                zorder=5,
+            )
         ax.axhline(0, color="black", lw=0.9)
-        lower = min(float(np.nanmin(frame["growth_rate"])), 0.0)
-        if lower < 0:
-            ax.axhspan(lower, 0, color="#d73027", alpha=0.07, zorder=-10)
+        if len(valid):
+            upper = max(float(np.nanmax(valid["growth_rate"])), 0.0)
+            if upper > 0:
+                ax.axhspan(0, upper, color="#d73027", alpha=0.07, zorder=-10)
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                "No valid COBRAVMEC points",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+            )
         ax.set_xlabel(
             r"Normalized toroidal flux $s$" if result.normalized_s else "VMEC surface index"
         )
-        ax.set_ylabel(r"COBRA eigenvalue $\lambda$")
-        ax.set_title("Ideal ballooning scan (negative = unstable)")
+        ax.set_ylabel(r"COBRAVMEC signed growth rate $\gamma$")
+        ax.set_title("Ideal ballooning scan (positive = unstable)")
         ax.legend(ncols=3, fontsize=8)
         _minor_ticks(ax)
         return _save(fig, path)
 
 
-def diagnose_neo(source: str | Path, outdir: str | Path):
+def diagnose_neo(
+    source: str | Path,
+    outdir: str | Path,
+    surface_labels: list[int] | None = None,
+):
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     result = read_neo(source)
+    if surface_labels is not None:
+        if len(surface_labels) != len(result.data):
+            raise ValueError(
+                "NEO output row count does not match the prepared boozmn surface mapping: "
+                f"{len(result.data)} != {len(surface_labels)}"
+            )
+        result.data.insert(
+            0,
+            "boozmn_surface_position",
+            result.data["surface_label"].to_numpy(copy=True),
+        )
+        result.data["surface_label"] = np.asarray(surface_labels, dtype=int)
     result.data.to_csv(outdir / "neo_normalized.csv", index=False)
     figure = plot_neo(result, outdir / "neo_effective_ripple.png")
     return result, [figure]
