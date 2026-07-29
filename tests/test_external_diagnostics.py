@@ -192,7 +192,8 @@ def test_run_neo_solver_with_fake_executable(tmp_path: Path):
     assert list(result.data["surface_label"]) == [8, 5]
     assert list(result.data["boozmn_surface_position"]) == [1, 2]
     with xr.open_dataset(tmp_path / "neo_run/run/boozmn_case.nc") as prepared:
-        assert list(prepared["jlist"].values) == [8, 5]
+        assert list(prepared["jlist"].values) == [1, 2]
+        assert list(prepared["s_b"].values) == [0.875, 0.5]
     assert all(path.is_file() for path in outputs)
 
 
