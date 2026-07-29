@@ -192,10 +192,6 @@ def _prepare_neo_boozmn(
         raise ValueError(f"NEO surfaces are absent from boozmn jlist: {missing}")
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if requested == available:
-        _copy_as(source, destination)
-        return requested
-
     with xr.open_dataset(source, decode_cf=False, mask_and_scale=False) as ds:
         if "jlist" not in ds:
             raise ValueError(
@@ -208,6 +204,14 @@ def _prepare_neo_boozmn(
         subset = ds.isel(
             {radial_dimension: [positions[label] for label in requested]}
         ).load()
+        # NEO first validates fluxs_arr against the values stored in jlist,
+        # even though its main loop later indexes the loaded arrays by position.
+        # Keep both stages consistent by making the prepared file positional;
+        # ``requested`` retains the physical VMEC labels for result remapping.
+        subset["jlist"] = xr.DataArray(
+            np.arange(1, len(requested) + 1, dtype=np.int32),
+            dims=(radial_dimension,),
+        )
         if "ns_b" in subset and subset["ns_b"].ndim == 0:
             subset["ns_b"] = xr.DataArray(np.int32(len(requested)))
 
