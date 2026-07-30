@@ -182,9 +182,9 @@ def test_run_neo_solver_with_fake_executable(tmp_path: Path):
         "assert not Path(f'neo_param.{ext}').exists()\n"
         "assert not Path('neo_param.in').exists()\n"
         "control = Path(f'neo_in.{ext}').read_text().splitlines()\n"
-        "assert control[5:7] == ['2', '1 2']\n"
+        "assert control[5:7] == ['2', '8 5']\n"
         "Path(f'neo_out.{ext}').write_text("
-        "'1 6e-5 0.4 0.74 2 5\\n2 8e-5 0.3 0.72 2 5\\n')\n",
+        "'8 6e-5 0.4 0.74 2 5\\n5 8e-5 0.3 0.72 2 5\\n')\n",
     )
     result, run, outputs = run_neo_solver(
         wout,
@@ -196,10 +196,10 @@ def test_run_neo_solver_with_fake_executable(tmp_path: Path):
     assert run.returncode == 0
     assert result.summary()["surface_count"] == 2
     assert list(result.data["surface_label"]) == [8, 5]
-    assert list(result.data["boozmn_surface_position"]) == [1, 2]
+    assert (tmp_path / "neo_run/run/boozmn_case.nc").read_bytes() == boozmn.read_bytes()
     with xr.open_dataset(tmp_path / "neo_run/run/boozmn_case.nc") as prepared:
-        assert list(prepared["jlist"].values) == [1, 2]
-        assert list(prepared["s_b"].values) == [0.875, 0.5]
+        assert list(prepared["jlist"].values) == [2, 5, 8]
+        assert list(prepared["s_b"].values) == [0.125, 0.5, 0.875]
     assert all(path.is_file() for path in outputs)
 
 
