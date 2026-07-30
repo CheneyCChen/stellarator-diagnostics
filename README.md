@@ -82,6 +82,10 @@ stell-diag qi wout_case.nc --boozmn boozmn_case.nc \
   --surfaces 0.15 0.30 0.45 0.60 0.75 0.90 \
   --nalpha 64 --nphi 129 --nlevels 129 -o diagnostics/qi
 
+# 程序默认自动把场周期边界放在共同高场平面；也可根据 Boozer 图手动指定弧度
+stell-diag qi wout_case.nc --boozmn boozmn_case.nc \
+  --surfaces 0.45 --zeta-offset 0.7853981634 -o diagnostics/qi
+
 # 也可省略 --boozmn，让程序按所选磁面先运行 BOOZ_XFORM
 stell-diag qi wout_case.nc --surfaces 0.25 0.5 0.75 -o diagnostics/qi
 
