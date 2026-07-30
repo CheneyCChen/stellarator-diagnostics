@@ -16,6 +16,7 @@ from stellarator_diagnostics.runners import (
     SolverDependencyError,
     SolverExecutionError,
     run_cobra_solver,
+    run_dkes_solver,
     run_neo_solver,
     write_cobra_input,
     write_neo_input,
@@ -230,6 +231,56 @@ def test_stale_neo_output_cannot_mask_fortran_stop(tmp_path: Path):
             executable=executable,
         )
     assert not stale_output.exists()
+
+
+def test_run_dkes_solver_scans_d11_star(tmp_path: Path):
+    wout = tmp_path / "wout_case.nc"
+    xr.Dataset({"ns": xr.DataArray(9)}).to_netcdf(wout)
+    boozmn = tmp_path / "boozmn_case.nc"
+    xr.Dataset(
+        {
+            "jlist": ("radius", [2, 5, 8]),
+            "s_b": ("radius", [0.125, 0.5, 0.875]),
+            "bmnc_b": (("radius", "mn"), np.ones((3, 2))),
+        }
+    ).to_netcdf(boozmn)
+    executable = _write_executable(
+        tmp_path / "xdkes",
+        "from pathlib import Path\n"
+        "import sys\n"
+        "ext, surface, modifier, coupling, lalpha = sys.argv[1:6]\n"
+        "assert surface == '5' and coupling == '4' and lalpha == '100'\n"
+        "assert Path(f'wout_{ext}.nc').is_file()\n"
+        "assert Path(f'boozmn_{ext}.nc').is_file()\n"
+        "pairs = [tuple(map(float, line.split())) for line in "
+        "Path('cmul_efield_list.txt').read_text().splitlines()]\n"
+        "Path(f'input_dkes.{ext}{modifier}').write_text('&dkes_indata\\n/\\n')\n"
+        "rows = ['*', 'cmul efield ...']\n"
+        "for cmul, efield in pairs:\n"
+        "    lower = 1.0 / (1.0 + 100.0 * cmul)\n"
+        "    values = [cmul, efield, 0, 0, lower, 1.1*lower, "
+        "-0.1, -0.09, 0.4, 0.44, 2.0, 3.0, 4.0, 1e-8, 1, 1, 1, 1, 1]\n"
+        "    rows.append(' '.join(str(value) for value in values))\n"
+        "Path(f'results.{ext}{modifier}').write_text('\\n'.join(rows) + '\\n')\n",
+    )
+
+    result, runs, outputs = run_dkes_solver(
+        wout,
+        tmp_path / "dkes_run",
+        boozmn=boozmn,
+        executable=executable,
+        surface_indices=[5],
+        cmul=[1e-3, 1e-2],
+        efield=[0.0],
+    )
+
+    assert len(runs) == 1
+    assert result.summary()["surface_count"] == 1
+    assert result.summary()["cmul_count"] == 2
+    assert list(result.data["surface_index"]) == [5, 5]
+    assert np.allclose(result.data["D11_star"], result.data["L11"])
+    assert np.allclose(result.data["D11_ref_m2_s"], 2.0 * result.data["D11_star"])
+    assert all(path.is_file() and path.stat().st_size > 0 for path in outputs)
 
 
 def test_run_cobra_solver_with_fake_executable(tmp_path: Path):

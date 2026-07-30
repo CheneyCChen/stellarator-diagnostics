@@ -43,10 +43,16 @@ class DkesResult:
             "cmul_count": int(self.data["cmul"].nunique()),
             "efield_count": int(self.data["efield"].nunique()),
         }
+        if "surface_index" in self.data:
+            result["surface_count"] = int(self.data["surface_index"].nunique())
         for coefficient in ("L11", "L31", "L33"):
             spread = self.data[f"{coefficient}_relative_spread"].to_numpy(float)
             result[f"{coefficient}_median_relative_spread"] = _finite_reduce(spread, np.nanmedian)
             result[f"{coefficient}_max_relative_spread"] = _finite_reduce(spread, np.nanmax)
+        if "D11_star" in self.data:
+            values = self.data["D11_star"].to_numpy(float)
+            result["D11_star_min"] = _finite_reduce(values, np.nanmin)
+            result["D11_star_max"] = _finite_reduce(values, np.nanmax)
         return result
 
 
@@ -186,6 +192,17 @@ def read_dkes(path: str | Path):
         scale = np.maximum(np.abs(middle), np.finfo(float).tiny)
         frame[coefficient] = middle
         frame[f"{coefficient}_relative_spread"] = np.abs(upper - lower) / scale
+    # STELLOPT calls the dimensionless monoenergetic matrix element L11;
+    # stellarator transport literature commonly denotes the same normalized
+    # radial coefficient D11*.  scal11 converts it to the code's 1-keV H+
+    # MKS reference coefficient, before any Maxwellian energy convolution.
+    frame["D11_star_m"] = frame["L11m"]
+    frame["D11_star_p"] = frame["L11p"]
+    frame["D11_star"] = frame["L11"]
+    if "scal11" in frame:
+        frame["D11_ref_m2_s_m"] = frame["L11m"] * frame["scal11"]
+        frame["D11_ref_m2_s_p"] = frame["L11p"] * frame["scal11"]
+        frame["D11_ref_m2_s"] = frame["L11"] * frame["scal11"]
     return DkesResult(path, frame)
 
 
@@ -311,6 +328,80 @@ def plot_dkes(result: DkesResult, outdir: str | Path):
         axes[0].legend(ncols=2, fontsize=8)
         axes[-1].set_xlabel(r"Collisionality parameter $\nu/v$ [m$^{-1}$]")
         _save(fig, convergence_path)
+    return [coefficient_path, convergence_path]
+
+
+def plot_dkes_d11_scan(result: DkesResult, outdir: str | Path):
+    """Plot the standard monoenergetic radial coefficient across surfaces."""
+    outdir = Path(outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+    frame = result.data.sort_values(["surface_index", "efield", "cmul"])
+    surfaces = sorted(frame["surface_index"].unique())
+    colors = plt.get_cmap("viridis")(np.linspace(0.08, 0.92, max(len(surfaces), 2)))
+    coefficient_path = outdir / "dkes_D11_star_scan.png"
+    convergence_path = outdir / "dkes_D11_convergence.png"
+
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(7.5, 5.1))
+        for color, surface in zip(colors, surfaces):
+            surface_frame = frame[frame["surface_index"] == surface]
+            for efield, group in surface_frame.groupby("efield"):
+                group = group.sort_values("cmul")
+                label = rf"$j={int(surface)},\ E_s/v={efield:.3g}$"
+                ax.plot(
+                    group["cmul"],
+                    group["D11_star"],
+                    "o-",
+                    color=color,
+                    lw=1.5,
+                    ms=3.2,
+                    label=label,
+                )
+                ax.fill_between(
+                    group["cmul"],
+                    np.minimum(group["D11_star_m"], group["D11_star_p"]),
+                    np.maximum(group["D11_star_m"], group["D11_star_p"]),
+                    color=color,
+                    alpha=0.16,
+                    linewidth=0,
+                )
+        ax.set_xscale("log")
+        if np.all(frame["D11_star"] > 0):
+            ax.set_yscale("log")
+        else:
+            ax.set_yscale("symlog", linthresh=_symlog_threshold(frame["D11_star"]))
+        ax.set_xlabel(r"Collisionality parameter $\nu/v$ [m$^{-1}$]")
+        ax.set_ylabel(r"Normalized monoenergetic radial coefficient $D_{11}^*$")
+        ax.set_title(r"DKES radial transport: $D_{11}^*$")
+        ax.legend(fontsize=7, ncols=2)
+        _minor_ticks(ax)
+        _save(fig, coefficient_path)
+
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(7.5, 4.8))
+        for color, surface in zip(colors, surfaces):
+            surface_frame = frame[frame["surface_index"] == surface]
+            for efield, group in surface_frame.groupby("efield"):
+                group = group.sort_values("cmul")
+                ax.plot(
+                    group["cmul"],
+                    100 * group["L11_relative_spread"],
+                    "o-",
+                    color=color,
+                    lw=1.4,
+                    ms=3,
+                    label=rf"$j={int(surface)},\ E_s/v={efield:.3g}$",
+                )
+        ax.axhline(3.0, color="0.25", ls="--", lw=0.9, label="3% guide")
+        ax.set_xscale("log")
+        ax.set_yscale("log")
+        ax.set_xlabel(r"Collisionality parameter $\nu/v$ [m$^{-1}$]")
+        ax.set_ylabel(r"$D_{11}^*$ variational spread [%]")
+        ax.set_title("DKES radial-coefficient convergence")
+        ax.legend(fontsize=7, ncols=2)
+        _minor_ticks(ax)
+        _save(fig, convergence_path)
+
     return [coefficient_path, convergence_path]
 
 
