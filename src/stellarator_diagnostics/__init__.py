@@ -22,4 +22,4 @@ __all__ = [
     "run_neo_solver",
     "scan",
 ]
-__version__ = "0.6.0"
+__version__ = "0.6.1"

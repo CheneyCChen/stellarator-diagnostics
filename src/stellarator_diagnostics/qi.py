@@ -28,6 +28,7 @@ class GoodmanQiSurface:
     shuffle_residual: float
     b_min: float
     b_max: float
+    zeta_offset: float
     alpha: np.ndarray = field(repr=False)
     phi: np.ndarray = field(repr=False)
     original: np.ndarray = field(repr=False)
@@ -45,6 +46,7 @@ class GoodmanQiSurface:
             "B_min_T": self.b_min,
             "B_max_T": self.b_max,
             "mirror_ratio": (self.b_max - self.b_min) / self.b_min,
+            "zeta_offset_rad": self.zeta_offset,
         }
 
 
@@ -85,9 +87,9 @@ def _periodic_normalized_integral(values, alpha, phi, scale):
 
 
 def _squash_well(values, minimum_index):
-    """Make both branches nondecreasing when moving away from the well minimum."""
-    left = np.maximum.accumulate(values[: minimum_index + 1][::-1])[::-1]
-    right = np.maximum.accumulate(values[minimum_index:])
+    """Flatten nonmonotonic points using Goodman et al.'s boundary-to-minimum loops."""
+    left = np.minimum.accumulate(values[: minimum_index + 1])
+    right = np.minimum.accumulate(values[minimum_index:][::-1])[::-1]
     return np.concatenate((left[:-1], right))
 
 
@@ -127,7 +129,28 @@ def _feasible_centers(raw, delta, period):
     return centers
 
 
-def _fieldline_wells(adapter, s, nalpha, nphi):
+def _auto_zeta_offset(adapter, s, nalpha, nphi):
+    """Place the field-period boundaries on the strongest common high-B plane."""
+    period = 2 * np.pi / adapter.nfp
+    count = max(4 * (nphi - 1), 256)
+    zeta = np.linspace(0, period, count, endpoint=False)
+    theta = np.linspace(0, 2 * np.pi, max(nalpha, 64), endpoint=False)
+    m, n, bmnc, bmns = adapter.modes_at(s)
+    phase = (
+        m[:, None, None] * theta[None, :, None]
+        - n[:, None, None] * zeta[None, None, :]
+    )
+    field = np.sum(
+        bmnc[:, None, None] * np.cos(phase) + bmns[:, None, None] * np.sin(phase),
+        axis=0,
+    )
+    # In a QI field B_max closes poloidally, so a valid boundary should be
+    # high for every poloidal angle rather than only high on average.
+    score = np.min(field, axis=0)
+    return float(zeta[int(np.argmax(score))])
+
+
+def _fieldline_wells(adapter, s, nalpha, nphi, zeta_offset):
     alpha = np.linspace(0, 2 * np.pi, nalpha, endpoint=False)
     period = 2 * np.pi / adapter.nfp
     phi = np.linspace(0, period, nphi)
@@ -136,7 +159,7 @@ def _fieldline_wells(adapter, s, nalpha, nphi):
     theta = alpha[:, None] + iota * phi[None, :]
     phase = (
         m[:, None, None] * theta[None, :, :]
-        - n[:, None, None] * phi[None, None, :]
+        - n[:, None, None] * (zeta_offset + phi)[None, None, :]
     )
     values = np.sum(
         bmnc[:, None, None] * np.cos(phase) + bmns[:, None, None] * np.sin(phase),
@@ -145,8 +168,22 @@ def _fieldline_wells(adapter, s, nalpha, nphi):
     return alpha, phi, iota, values
 
 
-def _compute_surface(adapter, s, surface_label, nalpha, nphi, nlevels):
-    alpha, phi, iota, original = _fieldline_wells(adapter, s, nalpha, nphi)
+def _compute_surface(
+    adapter,
+    s,
+    surface_label,
+    nalpha,
+    nphi,
+    nlevels,
+    zeta_offset,
+):
+    if zeta_offset is None:
+        offset = _auto_zeta_offset(adapter, s, nalpha, nphi)
+    else:
+        offset = float(zeta_offset) % (2 * np.pi / adapter.nfp)
+    alpha, phi, iota, original = _fieldline_wells(
+        adapter, s, nalpha, nphi, offset
+    )
     period = phi[-1]
     b_min = float(np.min(original))
     b_max = float(np.max(original))
@@ -161,7 +198,9 @@ def _compute_surface(adapter, s, surface_label, nalpha, nphi, nlevels):
         count = int(np.count_nonzero((minima == 0) | (minima == nphi - 1)))
         raise ValueError(
             f"{count}/{nalpha} field-line wells on s={s:.8g} have their minimum at a "
-            "field-period boundary; the Goodman construction requires an interior minimum"
+            "field-period boundary even after selecting the high-B toroidal plane at "
+            f"zeta={offset:.8g} rad. Try a denser Boozer transform or set --zeta-offset "
+            "explicitly after inspecting the Boozer contours"
         )
 
     for index, minimum in enumerate(minima):
@@ -239,6 +278,7 @@ def _compute_surface(adapter, s, surface_label, nalpha, nphi, nlevels):
         ),
         b_min=b_min,
         b_max=b_max,
+        zeta_offset=offset,
         alpha=alpha,
         phi=phi,
         original=original,
@@ -252,6 +292,7 @@ def compute_goodman_qi(
     nalpha: int = 64,
     nphi: int = 129,
     nlevels: int = 129,
+    zeta_offset: float | None = None,
 ):
     """Compute the Goodman et al. normalized QI residual on Boozer surfaces.
 
@@ -283,6 +324,7 @@ def compute_goodman_qi(
                 nalpha,
                 nphi,
                 nlevels,
+                zeta_offset,
             )
             for index in indices
         ]
@@ -331,9 +373,12 @@ def diagnose_goodman_qi(
     nalpha: int = 64,
     nphi: int = 129,
     nlevels: int = 129,
+    zeta_offset: float | None = None,
 ):
     """Compute the residual and write CSV, JSON, and diagnostic figures."""
-    result = compute_goodman_qi(boozmn, surfaces, nalpha, nphi, nlevels)
+    result = compute_goodman_qi(
+        boozmn, surfaces, nalpha, nphi, nlevels, zeta_offset
+    )
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     csv_path = outdir / "goodman_qi_residual.csv"
