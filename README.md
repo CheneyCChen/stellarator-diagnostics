@@ -22,6 +22,8 @@
 - 三维完整环面以 `|B|` 为表面颜色；
 - iota 图按 `NFP` 标记允许的低阶 `(m,n)` 共振；
 - 沿多条直线磁力线的 `|B|` 轨迹，用于快速观察 ripple 与局部磁阱；
+- Goodman 等人的 squash–stretch–shuffle 准等动力学目标场与归一化
+  $f_{\rm QI}$ residual，可逐磁面输出原场/目标磁阱、CSV 和径向图；
 - VMEC–DESC 或不同构型间的剖面/标量对比；
 - NEO `neo_out`：$\epsilon_{\rm eff}^{3/2}$ 与 $\epsilon_{\rm eff}$ 径向诊断；
 - DKES `results`：$L_{11}$、$L_{31}$、$L_{33}$ 单能输运系数、变分上下界
@@ -74,6 +76,14 @@ stell-diag xboozer wout_case.nc -o boozmn_case.nc \
 # 多磁面、无填充 Boozer 等值线
 stell-diag boozer boozmn_case.nc \
   --surfaces 0.15 0.30 0.45 0.60 0.75 0.90 1.0 -o boozer_surfaces
+
+# 计算 Goodman et al. 的 QI residual；已有 boozmn 时不会重复做坐标变换
+stell-diag qi wout_case.nc --boozmn boozmn_case.nc \
+  --surfaces 0.15 0.30 0.45 0.60 0.75 0.90 \
+  --nalpha 64 --nphi 129 --nlevels 129 -o diagnostics/qi
+
+# 也可省略 --boozmn，让程序按所选磁面先运行 BOOZ_XFORM
+stell-diag qi wout_case.nc --surfaces 0.25 0.5 0.75 -o diagnostics/qi
 
 # 也可直接使用已有 boozmn，跳过自动变换
 stell-diag analyze wout_case.nc --boozmn boozmn_case.nc -o diagnostics/case
@@ -139,6 +149,9 @@ neo/neo_effective_ripple.png
 dkes/dkes_coefficients.png
 dkes/dkes_convergence.png
 cobra/cobra_ballooning.png
+qi/goodman_qi_residual.csv
+qi/goodman_qi_residual.png
+qi/goodman_qi_wells_s*.png
 {neo,dkes,cobra}/*_normalized.csv
 <quantity>.csv           各剖面的原始数据
 ```
@@ -233,6 +246,20 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
     $D_{11}^*=L_{11}^{\rm DKES}$。CSV 中的 `D11_ref_m2_s` 是利用 `scal11`
     得到的 1-keV H⁺ MKS 参考量，不是对任意物种和温度完成 Maxwell 速度积分后的
     实际粒子/热输运系数。
+11. Goodman QI residual 按每个磁面上的 squash–stretch–shuffle 构造计算：
+
+    \[
+    f_{\rm QI}(s)=\frac{N_{\rm fp}}{4\pi^2}
+    \frac{\int_0^{2\pi}d\alpha\int_0^{2\pi/N_{\rm fp}}d\varphi\,
+    [B-B_{\rm QI}]^2}{(B_{\max}-B_{\min})^2}.
+    \]
+
+    这里沿直磁力线使用 $\theta=\alpha+\iota\varphi$；程序先压平非单调磁阱，
+    再把各分支拉伸到磁面的共同 $B_{\min},B_{\max}$，最后令相同 $B$ 的平均
+    bounce distance 与 $\alpha$ 无关。CSV 还分别报告 squash、stretch 和
+    shuffle 的诊断量，但它们不是总 $f_{\rm QI}$ 的可加分解。这个量也不同于
+    仅惩罚特定 Boozer 谐波的 proxy，或直接计算第二绝热不变量 $J_\parallel$
+    的 residual。
 
 ## STELLOPT 运行环境
 

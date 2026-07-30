@@ -6,11 +6,13 @@ import argparse
 import glob
 import json
 from dataclasses import asdict
+from pathlib import Path
 
 from .api import analyze, compare, scan
 from .boozer import run_booz_xform
 from .external import diagnose_cobra, diagnose_dkes, diagnose_neo
 from .plots import plot_boozer_surface_files
+from .qi import diagnose_goodman_qi
 from .readers import load_equilibrium
 from .runners import DEFAULT_DKES_CMUL, run_cobra_solver, run_dkes_solver, run_neo_solver
 
@@ -67,6 +69,26 @@ def _parser():
         nargs="+",
         default=[0.15, 0.30, 0.45, 0.60, 0.75, 0.90, 1.0],
     )
+    p.add_argument("--mboz", type=int)
+    p.add_argument("--nboz", type=int)
+
+    p = sub.add_parser(
+        "qi",
+        help="Compute the Goodman et al. squash-stretch-shuffle QI residual",
+    )
+    p.add_argument("wout", help="VMEC wout; used to generate boozmn unless --boozmn is given")
+    p.add_argument("-o", "--outdir", default="qi_diagnostics")
+    p.add_argument("--boozmn", help="Existing boozmn; otherwise run BOOZ_XFORM")
+    p.add_argument(
+        "--surfaces",
+        type=float,
+        nargs="+",
+        default=[0.15, 0.30, 0.45, 0.60, 0.75, 0.90, 1.0],
+        help="Normalized toroidal flux values, mapped to nearest packed surfaces",
+    )
+    p.add_argument("--nalpha", type=int, default=64)
+    p.add_argument("--nphi", type=int, default=129)
+    p.add_argument("--nlevels", type=int, default=129)
     p.add_argument("--mboz", type=int)
     p.add_argument("--nboz", type=int)
 
@@ -208,6 +230,31 @@ def main(argv=None):
                 nboz=args.nboz,
             )
         )
+    elif args.command == "qi":
+        outdir = Path(args.outdir)
+        if args.boozmn:
+            boozmn = Path(args.boozmn)
+        else:
+            outdir.mkdir(parents=True, exist_ok=True)
+            case = Path(args.wout).stem.removeprefix("wout_")
+            boozmn = outdir / f"boozmn_{case}.nc"
+            run_booz_xform(
+                args.wout,
+                boozmn,
+                surfaces=args.surfaces,
+                mboz=args.mboz,
+                nboz=args.nboz,
+            )
+        result, outputs = diagnose_goodman_qi(
+            boozmn,
+            outdir,
+            surfaces=args.surfaces,
+            nalpha=args.nalpha,
+            nphi=args.nphi,
+            nlevels=args.nlevels,
+        )
+        print(json.dumps(result.summary(), indent=2, default=str))
+        print("\n".join(str(path) for path in outputs))
     elif args.command in {"neo", "dkes", "cobra"}:
         diagnostic = {
             "neo": diagnose_neo,

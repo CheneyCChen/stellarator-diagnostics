@@ -277,6 +277,9 @@ class BoozerAdapter:
         self.nfp = int(as_scalar(self._get("nfp_b", "nfp"), 1))
         self.s_grid = self._read_surface_grid()
 
+    def close(self):
+        self.ds.close()
+
     def _get(self, *names):
         for name in names:
             if name in self.ds:
@@ -284,43 +287,84 @@ class BoozerAdapter:
         return None
 
     def _read_surface_grid(self):
+        bmnc = np.asarray(self._get("bmnc_b"))
+        xm = np.ravel(self._get("ixm_b", "xm_b"))
+        if bmnc.ndim == 2:
+            radial_size = bmnc.shape[0] if bmnc.shape[-1] == len(xm) else bmnc.shape[1]
+        else:
+            radial_size = 1
         s_b = self._get("s_b")
-        if s_b is not None:
+        if s_b is not None and np.asarray(s_b).size == radial_size:
             return np.ravel(np.asarray(s_b, dtype=float))
+        jlist = self._get("jlist")
+        ns = int(as_scalar(self._get("ns_b", "ns"), 0))
+        if jlist is not None and ns > 1:
+            labels = np.ravel(np.asarray(jlist, dtype=float))
+            if labels.size == radial_size:
+                # booz_xform stores half-grid input surface k as jlist=k+2.
+                # Its normalized toroidal flux is therefore (jlist-1.5)/(ns-1).
+                return (labels - 1.5) / (ns - 1)
         phi_b = self._get("phi_b")
-        if phi_b is not None:
+        if phi_b is not None and np.asarray(phi_b).size == radial_size:
             phi_b = np.ravel(np.asarray(phi_b, dtype=float))
             edge = np.nanmax(np.abs(phi_b))
             if edge > 0:
                 return np.abs(phi_b) / edge
-        jlist = self._get("jlist")
-        ns = int(as_scalar(self._get("ns_b", "ns"), 0))
-        if jlist is not None and ns > 1:
-            return (np.ravel(np.asarray(jlist, dtype=float)) - 1) / (ns - 1)
-        bmnc = np.asarray(self._get("bmnc_b"))
-        radial_size = min(bmnc.shape) if bmnc.ndim == 2 else 1
         return np.linspace(0, 1, radial_size)
 
     def available_surfaces(self):
         return np.asarray(self.s_grid, dtype=float)
 
-    def field_map(self, s=1.0, ntheta=128, nzeta=128, coordinates="boozer"):
-        theta_1d = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
-        zeta_1d = np.linspace(0, 2 * np.pi / self.nfp, nzeta, endpoint=False)
-        theta, zeta = np.meshgrid(theta_1d, zeta_1d, indexing="ij")
+    def surface_labels(self):
+        """Return BOOZ_XFORM ``jlist`` labels when available."""
+        labels = self._get("jlist")
+        if labels is None:
+            return None
+        labels = np.ravel(np.asarray(labels, dtype=int))
+        return labels if labels.size == len(self.s_grid) else None
+
+    def iota_at(self, s: float):
+        """Return rotational transform on the nearest packed Boozer surface."""
+        iota = self._get("iota_b", "iota")
+        if iota is None:
+            raise KeyError("boozmn file is missing iota_b")
+        values = np.ravel(np.asarray(iota, dtype=float))
+        nearest = int(np.argmin(np.abs(self.s_grid - float(s))))
+        labels = self.surface_labels()
+        if values.size == len(self.s_grid):
+            return float(values[nearest])
+        if labels is not None:
+            index = int(labels[nearest]) - 1
+            if 0 <= index < values.size:
+                return float(values[index])
+        grid = np.linspace(0, 1, values.size)
+        return float(np.interp(float(self.s_grid[nearest]), grid, values))
+
+    def modes_at(self, s: float):
+        """Return ``(m, n, bmnc, bmns)`` Fourier data at normalized flux ``s``."""
         xm = np.ravel(self._get("ixm_b", "xm_b"))
         xn = np.ravel(self._get("ixn_b", "xn_b"))
         bmnc = np.asarray(self._get("bmnc_b"), dtype=float)
         if bmnc.shape[-1] != len(xm):
             bmnc = bmnc.T
-        coeff = self._interp_boozer_modes(bmnc, s)
-        B = fourier_cos(coeff, xm, xn, theta, zeta)
-        bmns = self._get("bmns_b")
-        if bmns is not None:
-            bmns = np.asarray(bmns, dtype=float)
-            if bmns.shape[-1] != len(xm):
-                bmns = bmns.T
-            B += fourier_sin(self._interp_boozer_modes(bmns, s), xm, xn, theta, zeta)
+        cosine = self._interp_boozer_modes(bmnc, s)
+        raw_sine = self._get("bmns_b")
+        if raw_sine is None:
+            sine = np.zeros_like(cosine)
+        else:
+            raw_sine = np.asarray(raw_sine, dtype=float)
+            if raw_sine.shape[-1] != len(xm):
+                raw_sine = raw_sine.T
+            sine = self._interp_boozer_modes(raw_sine, s)
+        return xm, xn, cosine, sine
+
+    def field_map(self, s=1.0, ntheta=128, nzeta=128, coordinates="boozer"):
+        theta_1d = np.linspace(0, 2 * np.pi, ntheta, endpoint=False)
+        zeta_1d = np.linspace(0, 2 * np.pi / self.nfp, nzeta, endpoint=False)
+        theta, zeta = np.meshgrid(theta_1d, zeta_1d, indexing="ij")
+        xm, xn, bmnc, bmns = self.modes_at(s)
+        B = fourier_cos(bmnc, xm, xn, theta, zeta)
+        B += fourier_sin(bmns, xm, xn, theta, zeta)
         return FieldMap(float(s), theta, zeta, B, coordinates="Boozer")
 
     def _interp_boozer_modes(self, values, s):
