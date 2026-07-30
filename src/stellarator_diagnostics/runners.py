@@ -80,6 +80,24 @@ def _copy_as(source: str | Path, destination: Path) -> Path:
     return destination
 
 
+def _remove_stale_file(path: Path, description: str) -> None:
+    """Remove a previous run artifact without deleting directories."""
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        raise SolverExecutionError(
+            f"Cannot replace {description}: expected a file but found {path}"
+        )
+
+
+def _solver_log_excerpt(stdout: str | None, stderr: str | None, limit: int = 2000) -> str:
+    sections = []
+    for label, content in (("stdout", stdout), ("stderr", stderr)):
+        if content and content.strip():
+            sections.append(f"{label} tail:\n{content.strip()[-limit:]}")
+    return "\n".join(sections)
+
+
 def _run_command(
     solver: str,
     executable: Path,
@@ -90,6 +108,9 @@ def _run_command(
     timeout: float,
 ) -> SolverRun:
     command = [str(executable), *map(str, arguments)]
+    # A Fortran STOP can return status 0 before replacing the output.  Never
+    # allow an artifact from a previous invocation to validate the new run.
+    _remove_stale_file(output_file, f"stale {solver} output")
     started = time.monotonic()
     try:
         completed = subprocess.run(
@@ -121,8 +142,11 @@ def _run_command(
             f"See {stdout_log} and {stderr_log}."
         )
     if not output_file.is_file() or output_file.stat().st_size == 0:
+        excerpt = _solver_log_excerpt(completed.stdout, completed.stderr)
+        detail = f"\n{excerpt}" if excerpt else ""
         raise SolverExecutionError(
-            f"{solver} returned success but did not create a non-empty {output_file.name}"
+            f"{solver} returned success but did not create a non-empty "
+            f"{output_file.name}. See {stdout_log} and {stderr_log}.{detail}"
         )
     record = SolverRun(
         solver=solver,
@@ -334,6 +358,16 @@ def run_neo_solver(
             indent=2,
         ),
         encoding="utf-8",
+    )
+    # STELLOPT NEO checks these legacy names before neo_in.<extension>.
+    # Remove leftovers from an earlier run so the generated control file wins.
+    _remove_stale_file(
+        workdir / f"neo_param.{extension}",
+        "legacy NEO extension control file",
+    )
+    _remove_stale_file(
+        workdir / "neo_param.in",
+        "legacy NEO fallback control file",
     )
     input_file = write_neo_input(
         workdir / f"neo_in.{extension}",
