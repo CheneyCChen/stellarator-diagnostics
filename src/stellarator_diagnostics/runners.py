@@ -11,10 +11,19 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 from .boozer import infer_boozer_resolution, run_booz_xform
-from .external import CobraResult, NeoResult, diagnose_cobra, diagnose_neo
+from .external import (
+    CobraResult,
+    DkesResult,
+    NeoResult,
+    diagnose_cobra,
+    diagnose_neo,
+    plot_dkes_d11_scan,
+    read_dkes,
+)
 
 
 class SolverDependencyError(RuntimeError):
@@ -362,6 +371,137 @@ def run_neo_solver(
     )
     result, figures = diagnose_neo(output_file, outdir / "diagnostics")
     return result, record, figures
+
+
+DEFAULT_DKES_CMUL = (
+    1.0e-5,
+    3.0e-5,
+    1.0e-4,
+    3.0e-4,
+    1.0e-3,
+    3.0e-3,
+    1.0e-2,
+    3.0e-2,
+    1.0e-1,
+    3.0e-1,
+    1.0,
+)
+
+
+def run_dkes_solver(
+    wout: str | Path,
+    outdir: str | Path,
+    boozmn: str | Path | None = None,
+    executable: str | Path = "xdkes",
+    surface_indices: Sequence[int] | None = None,
+    cmul: Sequence[float] = DEFAULT_DKES_CMUL,
+    efield: Sequence[float] = (0.0,),
+    mboz: int | None = None,
+    nboz: int | None = None,
+    coupling_order: int = 4,
+    lalpha: int = 100,
+    timeout: float = 7200,
+) -> tuple[DkesResult, list[SolverRun], list[Path]]:
+    """Run current STELLOPT DKES and scan the monoenergetic radial D11*."""
+    executable_path = _resolve_executable(executable, "DKES")
+    outdir = Path(outdir).resolve()
+    outdir.mkdir(parents=True, exist_ok=True)
+    extension = _case_extension(wout)
+
+    cmul_values = [float(value) for value in cmul]
+    efield_values = [float(value) for value in efield]
+    if not cmul_values or any(not np.isfinite(value) or value <= 0 for value in cmul_values):
+        raise ValueError("DKES cmul values must be finite and strictly positive")
+    if not efield_values or any(not np.isfinite(value) for value in efield_values):
+        raise ValueError("DKES efield values must be finite")
+    if len(cmul_values) * len(efield_values) > 500:
+        raise ValueError("DKES supports at most 500 cmul/efield pairs per surface")
+    if coupling_order < 1:
+        raise ValueError("DKES coupling_order must be at least 1")
+    if lalpha < 6:
+        raise ValueError("DKES lalpha must be at least 6")
+
+    if boozmn is None:
+        actual_mboz, actual_nboz = infer_boozer_resolution(wout)
+        generated_booz = outdir / f"boozmn_{extension}.nc"
+        run_booz_xform(
+            wout,
+            generated_booz,
+            mboz=actual_mboz if mboz is None else mboz,
+            nboz=actual_nboz if nboz is None else nboz,
+        )
+    else:
+        generated_booz = Path(boozmn).resolve()
+
+    available = _boozmn_surface_labels(generated_booz)
+    surfaces = available if surface_indices is None else [int(value) for value in surface_indices]
+    if not surfaces:
+        raise ValueError("DKES requires at least one Boozer surface")
+    if len(surfaces) != len(set(surfaces)):
+        raise ValueError("DKES surface indices must be unique")
+    missing = [value for value in surfaces if value not in set(available)]
+    if missing:
+        raise ValueError(f"DKES surfaces are absent from boozmn jlist: {missing}")
+
+    ns = _vmec_ns(wout)
+    pairs = [(collision, electric) for electric in efield_values for collision in cmul_values]
+    runs = []
+    frames = []
+    raw_outputs = []
+    for surface in surfaces:
+        workdir = outdir / "run" / f"surface_{surface:04d}"
+        workdir.mkdir(parents=True, exist_ok=True)
+        _copy_as(wout, workdir / f"wout_{extension}.nc")
+        _copy_as(generated_booz, workdir / f"boozmn_{extension}.nc")
+        pair_file = workdir / "cmul_efield_list.txt"
+        pair_file.write_text(
+            "".join(f"{collision:.16g} {electric:.16g}\n" for collision, electric in pairs),
+            encoding="utf-8",
+        )
+
+        modifier = f"_s{surface:04d}"
+        input_file = workdir / f"input_dkes.{extension}{modifier}"
+        output_file = workdir / f"results.{extension}{modifier}"
+        record = _run_command(
+            "DKES",
+            executable_path,
+            [
+                extension,
+                str(surface),
+                modifier,
+                str(coupling_order),
+                str(lalpha),
+            ],
+            workdir,
+            input_file,
+            output_file,
+            timeout,
+        )
+        parsed = read_dkes(output_file)
+        if len(parsed.data) != len(pairs):
+            raise SolverExecutionError(
+                f"DKES surface {surface} produced {len(parsed.data)} result rows; "
+                f"expected {len(pairs)}"
+            )
+        frame = parsed.data.copy()
+        frame.insert(0, "s", (surface - 1.5) / (ns - 1))
+        frame.insert(0, "surface_index", surface)
+        frames.append(frame)
+        runs.append(record)
+        raw_outputs.append(output_file)
+
+    combined = pd.concat(frames, ignore_index=True)
+    diagnostics_dir = outdir / "diagnostics"
+    diagnostics_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = diagnostics_dir / "dkes_D11_scan.csv"
+    combined.to_csv(csv_path, index=False)
+    result = DkesResult(csv_path, combined)
+    figures = plot_dkes_d11_scan(result, diagnostics_dir)
+    (outdir / "dkes_runs.json").write_text(
+        json.dumps([asdict(run) for run in runs], indent=2),
+        encoding="utf-8",
+    )
+    return result, runs, [csv_path, *figures, *raw_outputs]
 
 
 def _vmec_ns(wout: str | Path) -> int:
