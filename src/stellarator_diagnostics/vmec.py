@@ -334,7 +334,9 @@ class BoozerAdapter:
         if values.size == len(self.s_grid):
             return float(values[nearest])
         if labels is not None:
-            index = int(labels[nearest]) - 1
+            # booz_xform documents compute_surfs = jlist - 2, while iota_b
+            # retains the full input radial array.
+            index = int(labels[nearest]) - 2
             if 0 <= index < values.size:
                 return float(values[index])
         grid = np.linspace(0, 1, values.size)
