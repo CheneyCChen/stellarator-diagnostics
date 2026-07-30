@@ -170,11 +170,17 @@ def test_run_neo_solver_with_fake_executable(tmp_path: Path):
             "bmnc_b": (("radius", "mn"), np.ones((3, 2))),
         }
     ).to_netcdf(boozmn)
+    workdir = tmp_path / "neo_run/run"
+    workdir.mkdir(parents=True)
+    (workdir / "neo_param.case").write_text("stale extension control\n")
+    (workdir / "neo_param.in").write_text("stale fallback control\n")
     executable = _write_executable(
         tmp_path / "xneo",
         "from pathlib import Path\n"
         "import sys\n"
         "ext = sys.argv[1]\n"
+        "assert not Path(f'neo_param.{ext}').exists()\n"
+        "assert not Path('neo_param.in').exists()\n"
         "control = Path(f'neo_in.{ext}').read_text().splitlines()\n"
         "assert control[5:7] == ['2', '1 2']\n"
         "Path(f'neo_out.{ext}').write_text("
@@ -195,6 +201,35 @@ def test_run_neo_solver_with_fake_executable(tmp_path: Path):
         assert list(prepared["jlist"].values) == [1, 2]
         assert list(prepared["s_b"].values) == [0.875, 0.5]
     assert all(path.is_file() for path in outputs)
+
+
+def test_stale_neo_output_cannot_mask_fortran_stop(tmp_path: Path):
+    wout = tmp_path / "wout_case.nc"
+    xr.Dataset({"ns": xr.DataArray(9)}).to_netcdf(wout)
+    boozmn = tmp_path / "boozmn_case.nc"
+    xr.Dataset(
+        {
+            "jlist": ("radius", [2]),
+            "s_b": ("radius", [0.5]),
+            "bmnc_b": (("radius", "mn"), np.ones((1, 2))),
+        }
+    ).to_netcdf(boozmn)
+    stale_output = tmp_path / "neo_run/run/neo_out.case"
+    stale_output.parent.mkdir(parents=True)
+    stale_output.write_text("2 1e-4 0.2 0.7 2 5\n")
+    executable = _write_executable(
+        tmp_path / "xneo",
+        "print('The requested surface is absent; intentional NEO stop')\n",
+    )
+
+    with pytest.raises(SolverExecutionError, match="intentional NEO stop"):
+        run_neo_solver(
+            wout,
+            tmp_path / "neo_run",
+            boozmn=boozmn,
+            executable=executable,
+        )
+    assert not stale_output.exists()
 
 
 def test_run_cobra_solver_with_fake_executable(tmp_path: Path):
