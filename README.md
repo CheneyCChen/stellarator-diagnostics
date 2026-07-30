@@ -25,10 +25,11 @@
 - VMEC–DESC 或不同构型间的剖面/标量对比；
 - NEO `neo_out`：$\epsilon_{\rm eff}^{3/2}$ 与 $\epsilon_{\rm eff}$ 径向诊断；
 - DKES `results`：$L_{11}$、$L_{31}$、$L_{33}$ 单能输运系数、变分上下界
-  及相对收敛带；
+  及相对收敛带；可直接扫描文献常用的径向单能系数
+  $D_{11}^*\equiv L_{11}^{\rm DKES}$；
 - COBRAVMEC `cobra_grate`：各磁力线的无限-$n$ 理想气球模带符号增长率及径向
   包络；按求解器实际输出约定，正增长率表示不稳定，负增长率表示稳定；
-- 求解器调用：在已配置 STELLOPT 的环境中直接运行 `xneo` 和
+- 求解器调用：在已配置 STELLOPT 的环境中直接运行 `xneo`、`xdkes` 和
   `xcobravmec`，自动生成官方输入文件、隔离运行目录、日志、运行记录和诊断图；
 - 大批文件扫描，单个坏文件不会终止整个任务；
 - Python API 与 `stell-diag` CLI。
@@ -94,6 +95,12 @@ stell-diag run-neo wout_case.nc -o runs/neo
 stell-diag run-neo wout_case.nc --boozmn boozmn_case.nc \
   --surface-indices 19 38 57 76 95 114 126 -o runs/neo
 
+# 扫描论文中最常用的径向单能输运系数 D11*；默认 E_s/v=0
+stell-diag run-dkes wout_case.nc --boozmn boozmn_case.nc \
+  --surface-indices 38 76 114 \
+  --cmul 1e-5 3e-5 1e-4 3e-4 1e-3 3e-3 1e-2 3e-2 1e-1 \
+  -o runs/dkes
+
 # 真正运行 COBRAVMEC v4.1；默认 5×5 起始角、16 个径向面、kth=1（最不稳定模）
 stell-diag run-cobra wout_case.nc -o runs/cobra
 
@@ -103,6 +110,7 @@ stell-diag run-cobra wout_case.nc --ntheta 12 --nzeta 12 \
 
 # 若可执行文件不在 PATH 中
 stell-diag run-neo wout_case.nc --executable /path/to/xneo -o runs/neo
+stell-diag run-dkes wout_case.nc --executable /path/to/xdkes -o runs/dkes
 stell-diag run-cobra wout_case.nc --executable /path/to/xcobravmec -o runs/cobra
 
 # 全部并入同一份 VMEC 报告
@@ -135,7 +143,7 @@ cobra/cobra_ballooning.png
 <quantity>.csv           各剖面的原始数据
 ```
 
-`run-neo` 与 `run-cobra` 使用以下目录结构：
+`run-neo`、`run-dkes` 与 `run-cobra` 使用以下目录结构：
 
 ```text
 neo_run/
@@ -145,6 +153,15 @@ neo_run/
 │   ├── neo_surface_map.json
 │   └── neo_run.json
 └── diagnostics/         解析后的 CSV 与图片
+
+dkes_run/
+├── run/
+│   └── surface_<j>/     每个 Boozer 磁面的 input_dkes、results 和日志
+├── dkes_runs.json
+└── diagnostics/
+    ├── dkes_D11_scan.csv
+    ├── dkes_D11_star_scan.png
+    └── dkes_D11_convergence.png
 
 cobra_run/
 ├── run/
@@ -201,10 +218,10 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
 6. VMEC 和 DESC 的同名稳定性量可能采用不同归一化。比较符号和径向结构前，
    应先核对版本与定义；本工具不擅自重标定。
 7. NEO、DKES、COBRA 是独立求解器。本包负责可靠读取、质量诊断和统一绘图，
-   不把 `wout` 后处理值冒充它们的计算结果。`run-neo` 会调用真实 `xneo`，
-   `run-cobra` 会调用真实 `xcobravmec`；任何非零退出码、超时或缺失输出都会
-   作为失败报告。NEO 需要 `boozmn`；DKES 使用 Boozer/直线磁力线坐标输入；
-   COBRAVMEC 直接基于 VMEC 平衡。
+   不把 `wout` 后处理值冒充它们的计算结果。`run-neo`、`run-dkes` 和
+   `run-cobra` 分别调用真实 `xneo`、`xdkes` 和 `xcobravmec`；任何非零退出码、
+   超时或缺失输出都会作为失败报告。NEO 与 DKES 需要 `boozmn`；COBRAVMEC
+   直接基于 VMEC 平衡。
 8. STELLOPT NEO 使用控制文件中的真实 VMEC 磁面编号访问 `boozmn` 的完整径向数组，
    再把所选磁面压缩到内部工作数组。`run-neo --surface-indices` 因此会验证编号属于
    `jlist`，但不会裁剪或重写 BOOZ_XFORM NetCDF，以保留 `ns_b`、完整剖面和字符串编码。
@@ -212,6 +229,10 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
    $\lambda<0$ 时写入正的 $\sqrt{-\lambda}$，表示不稳定；稳定分支写入负值。
    求解器失败哨兵值 `100` 会被标为 `solver_failed` 并使 `run-cobra` 明确失败，
    不会被计入稳定性统计。
+10. DKES 源码把无量纲单能矩阵元记为 $L_{11}$；本项目同时提供文献常用别名
+    $D_{11}^*=L_{11}^{\rm DKES}$。CSV 中的 `D11_ref_m2_s` 是利用 `scal11`
+    得到的 1-keV H⁺ MKS 参考量，不是对任意物种和温度完成 Maxwell 速度积分后的
+    实际粒子/热输运系数。
 
 ## STELLOPT 运行环境
 
@@ -220,6 +241,7 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
 ```bash
 source /path/to/STELLOPT.sh
 command -v xneo
+command -v xdkes
 command -v xcobravmec
 ```
 
