@@ -33,6 +33,7 @@ def rational_surfaces(
         target = float(frac)
         delta = iota - target
         crossings = np.where(delta[:-1] * delta[1:] <= 0)[0]
+        rational_crossings = []
         for idx in crossings:
             if iota[idx + 1] == iota[idx]:
                 s_cross = 0.5 * (s[idx] + s[idx + 1])
@@ -40,6 +41,12 @@ def rational_surfaces(
                 s_cross = s[idx] + (target - iota[idx]) * (s[idx + 1] - s[idx]) / (
                     iota[idx + 1] - iota[idx]
                 )
+            if any(
+                np.isclose(s_cross, previous, rtol=0.0, atol=1e-12)
+                for previous in rational_crossings
+            ):
+                continue
+            rational_crossings.append(float(s_cross))
             found.append(
                 {
                     "rational": f"{frac.numerator}/{frac.denominator}",

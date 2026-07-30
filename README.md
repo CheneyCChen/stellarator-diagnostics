@@ -21,8 +21,9 @@
   BOOZ_XFORM Boozer 等值线；
 - 三维完整环面以 `|B|` 为表面颜色；
 - iota 图按 `NFP` 标记允许的低阶 `(m,n)` 共振；
-- 沿多条直线磁力线的 `|B|` 轨迹，用于快速观察 ripple 与局部磁阱；
-- Goodman 等人的 squash–stretch–shuffle 准等动力学目标场与归一化
+- 直接从 `boozmn` Fourier 谱计算 Boozer 直磁力线上的 `|B|` 轨迹，用于快速
+  观察 ripple 与局部磁阱；
+- Goodman-compatible squash–stretch–shuffle 准等动力学目标场与归一化
   $f_{\rm QI}$ residual，可逐磁面输出原场/目标磁阱、CSV 和径向图；
 - VMEC–DESC 或不同构型间的剖面/标量对比；
 - NEO `neo_out`：$\epsilon_{\rm eff}^{3/2}$ 与 $\epsilon_{\rm eff}$ 径向诊断；
@@ -144,8 +145,8 @@ iota.png                 iota 与 NFP 允许的低阶有理面
 mercier_stability.png    总 D_Mercier（按径向稳定区间填色）与四个分项
 cross_sections.png       多磁面截面
 boundary_angles.png      不同环向角边界叠加图
-fieldline_traces.png     多条磁力线上的 |B|
-fieldline_long.png       一条磁力线连续 200 个场周期的 |B|
+fieldline_traces.png     多条 Boozer 直磁力线上的 |B|（需要 boozmn）
+fieldline_long.png       一条 Boozer 直磁力线连续 200 个场周期的 |B|
 surface_3d.png           以 |B| 着色的完整三维磁面
 surface_top.png          以 |B| 着色的三维磁面俯视图
 boozer/boozer_s*.png     各磁面分别输出的无填充 Boozer 等值线
@@ -230,8 +231,9 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
    区域的最小值；论文图只展示此分析区，并将纵轴固定为 `[-4,4]`。
 5. `wout` 中的角度是 VMEC 角，不是 Boozer 角。`analyze` 会自动调用成熟
    `booz_xform`，其 `mboz/nboz` 默认由 `xm_nyq` 与 `xn_nyq/NFP` 的实际
-   最大模数决定；若依赖不可用会明确警告而不会伪造 Boozer 图。传入
-   `--boozmn` 可直接读取已有结果并跳过变换。
+   最大模数决定；`mboz` 按 BOOZ_XFORM 的 `m=0,...,mboz-1` 约定保留最高阶
+   模。若依赖不可用会明确警告，并跳过 Boozer 等值线和直场线图，而不会用
+   VMEC 原生角度伪造结果。传入 `--boozmn` 可直接读取已有结果并跳过变换。
 6. VMEC 和 DESC 的同名稳定性量可能采用不同归一化。比较符号和径向结构前，
    应先核对版本与定义；本工具不擅自重标定。
 7. NEO、DKES、COBRA 是独立求解器。本包负责可靠读取、质量诊断和统一绘图，
@@ -246,11 +248,15 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
    $\lambda<0$ 时写入正的 $\sqrt{-\lambda}$，表示不稳定；稳定分支写入负值。
    求解器失败哨兵值 `100` 会被标为 `solver_failed` 并使 `run-cobra` 明确失败，
    不会被计入稳定性统计。
-10. DKES 源码把无量纲单能矩阵元记为 $L_{11}$；本项目同时提供文献常用别名
-    $D_{11}^*=L_{11}^{\rm DKES}$。CSV 中的 `D11_ref_m2_s` 是利用 `scal11`
+10. DKES 源码把归一化单能矩阵元记为 $L_{11}$；本项目同时提供文献常用别名
+    $D_{11}^*=L_{11}^{\rm DKES}$（STELLOPT/PySTEL 标注单位为
+    $\mathrm{m^{-1}T^{-2}}$）。CSV 中的 `D11_ref_m2_s` 是利用 `scal11`
     得到的 1-keV H⁺ MKS 参考量，不是对任意物种和温度完成 Maxwell 速度积分后的
-    实际粒子/热输运系数。
-11. Goodman QI residual 按每个磁面上的 squash–stretch–shuffle 构造计算：
+    实际粒子/热输运系数。当前 STELLOPT DKES 只支持恒星器对称谱；含
+    `lasym` 或非零 `bmns_b` 的 `boozmn` 会在运行前被拒绝。低碰撞率、有限
+    径向电场和超香蕉平台区还应使用更合适的新古典输运求解器交叉验证。
+11. Goodman-compatible QI residual 按每个磁面上的
+    squash–stretch–shuffle 构造计算：
 
     \[
     f_{\rm QI}(s)=\frac{N_{\rm fp}}{4\pi^2}
@@ -259,9 +265,12 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
     \]
 
     这里沿直磁力线使用 $\theta=\alpha+\iota\varphi$；程序先压平非单调磁阱，
-    再把各分支拉伸到磁面的共同 $B_{\min},B_{\max}$，最后令相同 $B$ 的平均
-    bounce distance 与 $\alpha$ 无关。CSV 还分别报告 squash、stretch 和
-    shuffle 的诊断量，但它们不是总 $f_{\rm QI}$ 的可加分解。这个量也不同于
+    再把各分支拉伸到磁面的共同 $B_{\min},B_{\max}$，最后用保持分支嵌套的
+    feasible-center projection 令相同 $B$ 的平均 bounce distance 与
+    $\alpha$ 无关。CSV 的 `mirror_ratio` 使用 Goodman 定义
+    $(B_{\max}-B_{\min})/(B_{\max}+B_{\min})$，并另列
+    `relative_well_depth=(B_{\max}-B_{\min})/B_{\min}`。CSV 还分别报告
+    squash、stretch 和 shuffle 的诊断量，但它们不是总 $f_{\rm QI}$ 的可加分解。这个量也不同于
     仅惩罚特定 Boozer 谐波的 proxy，或直接计算第二绝热不变量 $J_\parallel$
     的 residual。
 

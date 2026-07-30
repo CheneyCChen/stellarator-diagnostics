@@ -74,10 +74,15 @@ def scan(paths, output="scan_summary.csv", backend="auto"):
     rows = []
     errors = []
     for path in paths:
+        eq = None
         try:
-            rows.append(load_equilibrium(path, backend=backend).scalar_row())
+            eq = load_equilibrium(path, backend=backend)
+            rows.append(eq.scalar_row())
         except Exception as exc:
             errors.append({"source": str(path), "error": f"{type(exc).__name__}: {exc}"})
+        finally:
+            if eq is not None:
+                eq.close()
     table = pd.DataFrame(rows)
     table.to_csv(output, index=False)
     if errors:

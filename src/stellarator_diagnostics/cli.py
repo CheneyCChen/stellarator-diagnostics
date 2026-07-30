@@ -6,6 +6,7 @@ import argparse
 import glob
 import json
 from dataclasses import asdict
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 from .api import analyze, compare, scan
@@ -22,6 +23,11 @@ def _parser():
         prog="stell-diag",
         description="Unified VMEC/DESC equilibrium diagnostics",
     )
+    try:
+        package_version = version("stellarator-diagnostics")
+    except PackageNotFoundError:
+        package_version = "unknown"
+    parser.add_argument("--version", action="version", version=f"%(prog)s {package_version}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("analyze", help="Generate a complete report for one equilibrium")
@@ -74,7 +80,7 @@ def _parser():
 
     p = sub.add_parser(
         "qi",
-        help="Compute the Goodman et al. squash-stretch-shuffle QI residual",
+        help="Compute a Goodman-compatible squash-stretch-shuffle QI residual",
     )
     p.add_argument("wout", help="VMEC wout; used to generate boozmn unless --boozmn is given")
     p.add_argument("-o", "--outdir", default="qi_diagnostics")
@@ -330,7 +336,10 @@ def main(argv=None):
         print("\n".join(str(path) for path in outputs))
     elif args.command == "summary":
         eq = load_equilibrium(args.file, backend=args.backend)
-        print(json.dumps(eq.scalar_row(), indent=2, default=str))
+        try:
+            print(json.dumps(eq.scalar_row(), indent=2, default=str))
+        finally:
+            eq.close()
 
 
 if __name__ == "__main__":

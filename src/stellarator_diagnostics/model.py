@@ -99,3 +99,14 @@ class EquilibriumData:
             "nfp": self.nfp,
             **self.scalars,
         }
+
+    def close(self) -> None:
+        """Release backend files held by the attached adapter."""
+        if self.adapter is not None and hasattr(self.adapter, "close"):
+            self.adapter.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.close()

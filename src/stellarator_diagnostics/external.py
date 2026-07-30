@@ -192,7 +192,7 @@ def read_dkes(path: str | Path):
         scale = np.maximum(np.abs(middle), np.finfo(float).tiny)
         frame[coefficient] = middle
         frame[f"{coefficient}_relative_spread"] = np.abs(upper - lower) / scale
-    # STELLOPT calls the dimensionless monoenergetic matrix element L11;
+    # STELLOPT calls the normalized monoenergetic matrix element L11;
     # stellarator transport literature commonly denotes the same normalized
     # radial coefficient D11*.  scal11 converts it to the code's 1-keV H+
     # MKS reference coefficient, before any Maxwellian energy convolution.
@@ -371,7 +371,10 @@ def plot_dkes_d11_scan(result: DkesResult, outdir: str | Path):
         else:
             ax.set_yscale("symlog", linthresh=_symlog_threshold(frame["D11_star"]))
         ax.set_xlabel(r"Collisionality parameter $\nu/v$ [m$^{-1}$]")
-        ax.set_ylabel(r"Normalized monoenergetic radial coefficient $D_{11}^*$")
+        ax.set_ylabel(
+            r"Normalized monoenergetic radial coefficient $D_{11}^*$ "
+            r"[m$^{-1}$ T$^{-2}$]"
+        )
         ax.set_title(r"DKES radial transport: $D_{11}^*$")
         ax.legend(fontsize=7, ncols=2)
         _minor_ticks(ax)

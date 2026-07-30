@@ -12,12 +12,12 @@ import pandas as pd
 from .external import diagnose_cobra, diagnose_dkes, diagnose_neo
 from .model import EquilibriumData
 from .plots import (
+    plot_boozer_fieldline_traces,
+    plot_boozer_long_fieldline_trace,
     plot_boozer_surface_files,
     plot_boundary_angles,
     plot_cross_sections,
-    plot_fieldline_traces,
     plot_iota,
-    plot_long_fieldline_trace,
     plot_profiles,
     plot_stability,
     plot_surface_3d,
@@ -72,20 +72,6 @@ def write_report(
             lambda: plot_boundary_angles(eq, outdir / "boundary_angles.png"),
         ),
         (
-            "fieldline_traces",
-            lambda: plot_fieldline_traces(eq, outdir / "fieldline_traces.png", s=surface_s),
-        ),
-        (
-            "fieldline_long",
-            lambda: plot_long_fieldline_trace(
-                eq,
-                outdir / "fieldline_long.png",
-                s=surface_s,
-                alpha_pi=0,
-                periods=200,
-            ),
-        ),
-        (
             "surface_3d",
             lambda: surface_3d_job("perspective", "surface_3d.png"),
         ),
@@ -94,6 +80,34 @@ def write_report(
             lambda: surface_3d_job("top", "surface_top.png"),
         ),
     ]
+    if boozmn is not None:
+        jobs.extend(
+            [
+                (
+                    "fieldline_traces",
+                    lambda: plot_boozer_fieldline_traces(
+                        boozmn,
+                        outdir / "fieldline_traces.png",
+                        s=surface_s,
+                    ),
+                ),
+                (
+                    "fieldline_long",
+                    lambda: plot_boozer_long_fieldline_trace(
+                        boozmn,
+                        outdir / "fieldline_long.png",
+                        s=surface_s,
+                        alpha_pi=0,
+                        periods=200,
+                    ),
+                ),
+            ]
+        )
+    else:
+        eq.warnings.append(
+            "Boozer field-line plots skipped: pass --boozmn or install booz_xform; "
+            "VMEC/DESC native angles are not Boozer straight-field-line angles"
+        )
     for name, job in jobs:
         try:
             result = job()

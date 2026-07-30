@@ -6,10 +6,16 @@ import xarray as xr
 
 from stellarator_diagnostics.boozer import infer_boozer_resolution
 from stellarator_diagnostics.plots import (
+    plot_boozer_fieldline_traces,
+    plot_boozer_long_fieldline_trace,
     plot_boozer_surface_files,
     plot_boozer_surfaces,
 )
-from stellarator_diagnostics.qi import compute_goodman_qi, diagnose_goodman_qi
+from stellarator_diagnostics.qi import (
+    _evaluate_fourier_field,
+    compute_goodman_qi,
+    diagnose_goodman_qi,
+)
 from stellarator_diagnostics.vmec import BoozerAdapter
 
 matplotlib.use("Agg")
@@ -61,7 +67,7 @@ def test_infer_boozer_resolution_uses_vmec_nyquist_modes(tmp_path):
             "xn_nyq": ("mn_nyq", [-64, 0, 64]),
         }
     ).to_netcdf(source)
-    assert infer_boozer_resolution(source) == (16, 16)
+    assert infer_boozer_resolution(source) == (17, 16)
 
 
 def make_qi_boozmn(path: Path, perturbation=0.0, well_sign=1.0):
@@ -73,7 +79,9 @@ def make_qi_boozmn(path: Path, perturbation=0.0, well_sign=1.0):
         if perturbation == 0
         else [2.0, 0.2 * well_sign, perturbation]
     )
-    iota = 0.61 + 0.01 * np.arange(ns)
+    # Current booz_xform output retains a leading dummy in full iota_b:
+    # jlist label j is therefore stored at Python index j-1.
+    iota = np.r_[0.0, 0.60 + 0.01 * np.arange(1, ns)]
     xr.Dataset(
         {
             "nfp_b": xr.DataArray(4),
@@ -102,6 +110,47 @@ def test_boozer_jlist_uses_packed_half_grid_and_full_iota(tmp_path):
         adapter.close()
 
 
+def test_boozer_fieldline_plots_use_boozer_spectrum(tmp_path):
+    source = tmp_path / "boozmn_trace.nc"
+    make_qi_boozmn(source)
+    short = plot_boozer_fieldline_traces(
+        source,
+        tmp_path / "short.png",
+        s=0.45,
+        periods=2,
+    )
+    long = plot_boozer_long_fieldline_trace(
+        source,
+        tmp_path / "long.png",
+        s=0.45,
+        periods=3,
+    )
+    assert short.stat().st_size > 10_000
+    assert long.stat().st_size > 10_000
+
+
+def test_chunked_qi_fourier_evaluation_matches_direct_sum():
+    m = np.arange(7)
+    n = 4 * np.arange(7)
+    cosine = np.linspace(0.1, 0.7, 7)
+    sine = np.linspace(-0.2, 0.2, 7)
+    theta, zeta = np.meshgrid(
+        np.linspace(0, 2 * np.pi, 5),
+        np.linspace(0, np.pi / 2, 6),
+        indexing="ij",
+    )
+    phase = m[:, None, None] * theta - n[:, None, None] * zeta
+    direct = np.sum(
+        cosine[:, None, None] * np.cos(phase)
+        + sine[:, None, None] * np.sin(phase),
+        axis=0,
+    )
+    chunked = _evaluate_fourier_field(
+        m, n, cosine, sine, theta, zeta, chunk_size=2
+    )
+    assert np.allclose(chunked, direct)
+
+
 def test_goodman_qi_exact_field_has_zero_residual(tmp_path):
     source = tmp_path / "boozmn_exact_qi.nc"
     make_qi_boozmn(source)
@@ -109,6 +158,8 @@ def test_goodman_qi_exact_field_has_zero_residual(tmp_path):
     assert len(result.data) == 1
     assert result.data.loc[0, "f_QI"] < 1e-24
     assert result.data.loc[0, "squash_residual"] < 1e-24
+    assert np.isclose(result.data.loc[0, "mirror_ratio"], 0.1)
+    assert np.isclose(result.data.loc[0, "relative_well_depth"], 2 / 9)
 
 
 def test_goodman_qi_auto_phase_handles_well_crossing_original_boundary(tmp_path):
