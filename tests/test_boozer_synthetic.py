@@ -64,12 +64,16 @@ def test_infer_boozer_resolution_uses_vmec_nyquist_modes(tmp_path):
     assert infer_boozer_resolution(source) == (16, 16)
 
 
-def make_qi_boozmn(path: Path, perturbation=0.0):
+def make_qi_boozmn(path: Path, perturbation=0.0, well_sign=1.0):
     ns = 9
     modes = [0, 0] if perturbation == 0 else [0, 0, 1]
     toroidal_modes = [0, 4] if perturbation == 0 else [0, 4, 0]
-    coefficients = [2.0, 0.2] if perturbation == 0 else [2.0, 0.2, perturbation]
-    iota = np.full(ns, 0.65)
+    coefficients = (
+        [2.0, 0.2 * well_sign]
+        if perturbation == 0
+        else [2.0, 0.2 * well_sign, perturbation]
+    )
+    iota = 0.61 + 0.01 * np.arange(ns)
     xr.Dataset(
         {
             "nfp_b": xr.DataArray(4),
@@ -93,7 +97,7 @@ def test_boozer_jlist_uses_packed_half_grid_and_full_iota(tmp_path):
     try:
         assert np.allclose(adapter.available_surfaces(), [(5 - 1.5) / 8])
         assert np.array_equal(adapter.surface_labels(), [5])
-        assert adapter.iota_at(adapter.available_surfaces()[0]) == 0.65
+        assert adapter.iota_at(adapter.available_surfaces()[0]) == 0.64
     finally:
         adapter.close()
 
@@ -105,6 +109,14 @@ def test_goodman_qi_exact_field_has_zero_residual(tmp_path):
     assert len(result.data) == 1
     assert result.data.loc[0, "f_QI"] < 1e-24
     assert result.data.loc[0, "squash_residual"] < 1e-24
+
+
+def test_goodman_qi_auto_phase_handles_well_crossing_original_boundary(tmp_path):
+    source = tmp_path / "boozmn_shifted_qi.nc"
+    make_qi_boozmn(source, well_sign=-1.0)
+    result = compute_goodman_qi(source, nalpha=16, nphi=65, nlevels=65)
+    assert result.data.loc[0, "f_QI"] < 1e-24
+    assert np.isclose(result.data.loc[0, "zeta_offset_rad"], np.pi / 4)
 
 
 def test_goodman_qi_detects_alpha_dependent_wells_and_writes_outputs(tmp_path):
