@@ -89,6 +89,11 @@ def _parser():
     p.add_argument("--nalpha", type=int, default=64)
     p.add_argument("--nphi", type=int, default=129)
     p.add_argument("--nlevels", type=int, default=129)
+    p.add_argument(
+        "--zeta-offset",
+        type=float,
+        help="Boozer toroidal origin [rad]; default automatically selects the common high-B plane",
+    )
     p.add_argument("--mboz", type=int)
     p.add_argument("--nboz", type=int)
 
@@ -252,6 +257,7 @@ def main(argv=None):
             nalpha=args.nalpha,
             nphi=args.nphi,
             nlevels=args.nlevels,
+            zeta_offset=args.zeta_offset,
         )
         print(json.dumps(result.summary(), indent=2, default=str))
         print("\n".join(str(path) for path in outputs))
