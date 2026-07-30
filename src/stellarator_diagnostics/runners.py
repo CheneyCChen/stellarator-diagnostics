@@ -137,9 +137,11 @@ def _run_command(
     stdout_log.write_text(completed.stdout or "", encoding="utf-8")
     stderr_log.write_text(completed.stderr or "", encoding="utf-8")
     if completed.returncode != 0:
+        excerpt = _solver_log_excerpt(completed.stdout, completed.stderr)
+        detail = f"\n{excerpt}" if excerpt else ""
         raise SolverExecutionError(
             f"{solver} failed with return code {completed.returncode}. "
-            f"See {stdout_log} and {stderr_log}."
+            f"See {stdout_log} and {stderr_log}.{detail}"
         )
     if not output_file.is_file() or output_file.stat().st_size == 0:
         excerpt = _solver_log_excerpt(completed.stdout, completed.stderr)
@@ -169,15 +171,9 @@ def _run_command(
 
 def _boozmn_surface_labels(boozmn: str | Path) -> list[int]:
     with xr.open_dataset(boozmn, decode_cf=False, mask_and_scale=False) as ds:
-        if "jlist" in ds:
-            values = np.ravel(np.asarray(ds["jlist"].values, dtype=int))
-        elif "s_b" in ds:
-            values = np.arange(1, np.asarray(ds["s_b"]).size + 1, dtype=int)
-        elif "bmnc_b" in ds:
-            shape = np.asarray(ds["bmnc_b"]).shape
-            values = np.arange(1, min(shape) + 1, dtype=int)
-        else:
-            raise ValueError("Cannot determine NEO surfaces from boozmn")
+        if "jlist" not in ds:
+            raise ValueError("NEO requires a BOOZ_XFORM file containing jlist")
+        values = np.ravel(np.asarray(ds["jlist"].values, dtype=int))
     labels = [int(value) for value in values if int(value) > 0]
     if len(labels) != len(set(labels)):
         raise ValueError("boozmn surface labels must be unique")
@@ -189,12 +185,11 @@ def _prepare_neo_boozmn(
     destination: str | Path,
     requested_labels: Sequence[int] | None,
 ) -> list[int]:
-    """Copy or subset a boozmn so NEO always computes positional surfaces 1..N.
+    """Copy a BOOZ_XFORM file unchanged and validate requested VMEC labels.
 
-    Current STELLOPT NEO uses the entries in its surface list as output labels,
-    while indexing the loaded Boozer surfaces by their position.  Preparing a
-    file containing exactly the requested surfaces avoids a silent mismatch
-    between the labels written to ``neo_out`` and the surfaces actually used.
+    NEO needs ``ns_b`` and the full radial profile arrays intact.  It uses the
+    requested jlist labels to select packed Boozer harmonics and only then
+    compresses those surfaces into its internal 1..N work arrays.
     """
     source = Path(source).resolve()
     destination = Path(destination).resolve()
@@ -215,33 +210,7 @@ def _prepare_neo_boozmn(
     if missing:
         raise ValueError(f"NEO surfaces are absent from boozmn jlist: {missing}")
 
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    with xr.open_dataset(source, decode_cf=False, mask_and_scale=False) as ds:
-        if "jlist" not in ds:
-            raise ValueError(
-                "Cannot safely select NEO surface indices from a boozmn without jlist"
-            )
-        if len(ds["jlist"].dims) != 1:
-            raise ValueError("boozmn jlist must be one-dimensional")
-        radial_dimension = ds["jlist"].dims[0]
-        positions = {label: index for index, label in enumerate(available)}
-        subset = ds.isel(
-            {radial_dimension: [positions[label] for label in requested]}
-        ).load()
-        # NEO first validates fluxs_arr against the values stored in jlist,
-        # even though its main loop later indexes the loaded arrays by position.
-        # Keep both stages consistent by making the prepared file positional;
-        # ``requested`` retains the physical VMEC labels for result remapping.
-        subset["jlist"] = xr.DataArray(
-            np.arange(1, len(requested) + 1, dtype=np.int32),
-            dims=(radial_dimension,),
-        )
-        if "ns_b" in subset and subset["ns_b"].ndim == 0:
-            subset["ns_b"] = xr.DataArray(np.int32(len(requested)))
-
-    temporary = destination.with_name(destination.name + ".tmp")
-    subset.to_netcdf(temporary)
-    temporary.replace(destination)
+    _copy_as(source, destination)
     return requested
 
 
@@ -348,12 +317,11 @@ def run_neo_solver(
         local_booz,
         surface_indices,
     )
-    surface_positions = list(range(1, len(surface_labels) + 1))
     (workdir / "neo_surface_map.json").write_text(
         json.dumps(
             [
                 {"boozmn_position": position, "surface_label": label}
-                for position, label in zip(surface_positions, surface_labels)
+                for position, label in enumerate(surface_labels, start=1)
             ],
             indent=2,
         ),
@@ -373,7 +341,7 @@ def run_neo_solver(
         workdir / f"neo_in.{extension}",
         local_booz.name,
         f"neo_out.{extension}",
-        surface_positions,
+        surface_labels,
         theta_n=theta_n,
         phi_n=phi_n,
         npart=npart,
@@ -392,11 +360,7 @@ def run_neo_solver(
         output_file,
         timeout,
     )
-    result, figures = diagnose_neo(
-        output_file,
-        outdir / "diagnostics",
-        surface_labels=surface_labels,
-    )
+    result, figures = diagnose_neo(output_file, outdir / "diagnostics")
     return result, record, figures
 
 
