@@ -10,7 +10,6 @@ import numpy as np
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
 from matplotlib.ticker import AutoMinorLocator
-from scipy.interpolate import RegularGridInterpolator
 
 from .diagnostics import nfp_resonances
 from .model import EquilibriumData, FieldMap, Surface
@@ -43,8 +42,10 @@ def _save(fig, path):
 
 
 def _minor_ticks(ax):
-    ax.xaxis.set_minor_locator(AutoMinorLocator())
-    ax.yaxis.set_minor_locator(AutoMinorLocator())
+    if ax.get_xscale() == "linear":
+        ax.xaxis.set_minor_locator(AutoMinorLocator())
+    if ax.get_yscale() == "linear":
+        ax.yaxis.set_minor_locator(AutoMinorLocator())
 
 
 def plot_profiles(eq: EquilibriumData, path: str | Path):
@@ -441,9 +442,12 @@ def plot_boozer_surfaces(
 ):
     """Plot unfilled |B| contours on several Boozer-coordinate surfaces."""
     adapter = BoozerAdapter(boozmn)
-    available = adapter.available_surfaces()
-    selected = [float(available[np.argmin(np.abs(available - s))]) for s in surfaces]
-    fields = [adapter.field_map(s=s, ntheta=160, nzeta=160) for s in selected]
+    try:
+        available = adapter.available_surfaces()
+        selected = [float(available[np.argmin(np.abs(available - s))]) for s in surfaces]
+        fields = [adapter.field_map(s=s, ntheta=160, nzeta=160) for s in selected]
+    finally:
+        adapter.close()
     bmin = min(float(np.nanmin(field.values)) for field in fields)
     bmax = max(float(np.nanmax(field.values)) for field in fields)
     levels = np.linspace(bmin, bmax, ncontours)
@@ -522,9 +526,12 @@ def plot_boozer_surface_files(
     outdir = Path(outdir)
     outdir.mkdir(parents=True, exist_ok=True)
     adapter = BoozerAdapter(boozmn)
-    available = adapter.available_surfaces()
-    selected = [float(available[np.argmin(np.abs(available - s))]) for s in surfaces]
-    fields = [adapter.field_map(s=s, ntheta=192, nzeta=192) for s in selected]
+    try:
+        available = adapter.available_surfaces()
+        selected = [float(available[np.argmin(np.abs(available - s))]) for s in surfaces]
+        fields = [adapter.field_map(s=s, ntheta=192, nzeta=192) for s in selected]
+    finally:
+        adapter.close()
     bmin = min(float(np.nanmin(field.values)) for field in fields)
     bmax = max(float(np.nanmax(field.values)) for field in fields)
     levels = np.linspace(bmin, bmax, ncontours)
@@ -592,75 +599,87 @@ def plot_boozer_surface_files(
     return outputs
 
 
-def plot_fieldline_traces(
-    eq: EquilibriumData,
+def _boozer_trace_values(adapter, s, alpha, zeta):
+    """Evaluate a Boozer Fourier spectrum along theta_B=alpha+iota*zeta_B."""
+    iota = adapter.iota_at(s)
+    m, n, bmnc, bmns = adapter.modes_at(s)
+    theta = np.asarray(alpha)[..., None] + iota * np.asarray(zeta)
+    values = np.zeros_like(theta, dtype=float)
+    for start in range(0, len(m), 128):
+        stop = min(start + 128, len(m))
+        phase = (
+            m[start:stop, None, None] * theta[None, ...]
+            - n[start:stop, None, None] * np.asarray(zeta)[None, None, :]
+        )
+        values += np.sum(
+            bmnc[start:stop, None, None] * np.cos(phase)
+            + bmns[start:stop, None, None] * np.sin(phase),
+            axis=0,
+        )
+    return iota, values
+
+
+def plot_boozer_fieldline_traces(
+    boozmn: str | Path,
     path: str | Path,
     s: float = 0.5,
     alphas=(0.0, 0.5, 1.0, 1.5),
     periods: int = 4,
 ):
-    """Plot |B| along straight-field-line trajectories."""
-    if "iota" not in eq.profiles:
-        return None
-    s_iota, iota_profile = eq.profiles["iota"]
-    iota = float(np.interp(s, s_iota, iota_profile))
-    field = eq.field_map(s=s, ntheta=192, nzeta=192)
-    theta_grid = field.theta[:, 0]
-    zeta_grid = field.zeta[0]
-    theta_period = 2 * np.pi
-    zeta_period = 2 * np.pi / eq.nfp
-    theta_closed = np.r_[theta_grid, theta_period]
-    zeta_closed = np.r_[zeta_grid, zeta_period]
-    values_closed = np.pad(field.values, ((0, 1), (0, 1)), mode="wrap")
-    interpolator = RegularGridInterpolator(
-        (theta_closed, zeta_closed), values_closed, bounds_error=False
-    )
-    zeta = np.linspace(0, periods * zeta_period, 1200)
+    """Plot |B| on straight field lines using a Boozer Fourier spectrum."""
+    adapter = BoozerAdapter(boozmn)
+    try:
+        actual_s = float(
+            adapter.available_surfaces()[
+                np.argmin(np.abs(adapter.available_surfaces() - float(s)))
+            ]
+        )
+        zeta_period = 2 * np.pi / adapter.nfp
+        zeta = np.linspace(0, periods * zeta_period, 1200)
+        alpha = np.asarray(alphas, dtype=float) * np.pi
+        iota, values = _boozer_trace_values(adapter, actual_s, alpha, zeta)
+    finally:
+        adapter.close()
 
     with plt.rc_context(STYLE):
         fig, ax = plt.subplots(figsize=(7.2, 4.6))
-        for alpha_pi in alphas:
-            theta = alpha_pi * np.pi + iota * zeta
-            points = np.column_stack((np.mod(theta, theta_period), np.mod(zeta, zeta_period)))
+        for alpha_pi, trace in zip(alphas, values):
             ax.plot(
                 zeta / zeta_period,
-                interpolator(points),
+                trace,
                 label=rf"$\alpha/\pi={alpha_pi:g}$",
             )
         ax.set_xlabel("Field periods traversed")
         ax.set_ylabel(r"$|B|$ [T]")
-        ax.set_title(rf"Field-line traces at $s={s:g}$, $\iota={iota:.4f}$")
+        ax.set_title(rf"Boozer field-line traces at $s={actual_s:g}$, $\iota={iota:.4f}$")
         ax.legend(ncols=2, fontsize=8)
         _minor_ticks(ax)
         return _save(fig, path)
 
 
-def plot_long_fieldline_trace(
-    eq: EquilibriumData,
+def plot_boozer_long_fieldline_trace(
+    boozmn: str | Path,
     path: str | Path,
     s: float = 0.5,
     alpha_pi: float = 0.0,
     periods: int = 200,
 ):
-    """Plot one field line over many field periods."""
-    if "iota" not in eq.profiles:
-        return None
-    s_iota, iota_profile = eq.profiles["iota"]
-    iota = float(np.interp(s, s_iota, iota_profile))
-    field = eq.field_map(s=s, ntheta=256, nzeta=256)
-    theta_grid = field.theta[:, 0]
-    zeta_grid = field.zeta[0]
-    theta_period = 2 * np.pi
-    zeta_period = 2 * np.pi / eq.nfp
-    interpolator = RegularGridInterpolator(
-        (np.r_[theta_grid, theta_period], np.r_[zeta_grid, zeta_period]),
-        np.pad(field.values, ((0, 1), (0, 1)), mode="wrap"),
-        bounds_error=False,
-    )
-    zeta = np.linspace(0, periods * zeta_period, periods * 300 + 1)
-    theta = alpha_pi * np.pi + iota * zeta
-    points = np.column_stack((np.mod(theta, theta_period), np.mod(zeta, zeta_period)))
-    values = interpolator(points)
+    """Plot one Boozer straight field line over many field periods."""
+    adapter = BoozerAdapter(boozmn)
+    try:
+        actual_s = float(
+            adapter.available_surfaces()[
+                np.argmin(np.abs(adapter.available_surfaces() - float(s)))
+            ]
+        )
+        zeta_period = 2 * np.pi / adapter.nfp
+        zeta = np.linspace(0, periods * zeta_period, periods * 300 + 1)
+        iota, traces = _boozer_trace_values(
+            adapter, actual_s, np.asarray([alpha_pi * np.pi]), zeta
+        )
+        values = traces[0]
+    finally:
+        adapter.close()
 
     with plt.rc_context(STYLE):
         fig, ax = plt.subplots(figsize=(11.5, 4.2))
@@ -669,7 +688,7 @@ def plot_long_fieldline_trace(
         ax.set_xlabel("Field periods traversed")
         ax.set_ylabel(r"$|B|$ [T]")
         ax.set_title(
-            rf"Long field-line trace: $s={s:g}$, "
+            rf"Long Boozer field-line trace: $s={actual_s:g}$, "
             rf"$\alpha/\pi={alpha_pi:g}$, $\iota={iota:.4f}$"
         )
         _minor_ticks(ax)

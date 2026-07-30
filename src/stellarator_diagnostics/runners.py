@@ -189,6 +189,32 @@ def _boozmn_surface_labels(boozmn: str | Path) -> list[int]:
     return labels
 
 
+def _validate_dkes_boozmn_symmetry(boozmn: str | Path) -> None:
+    """Reject asymmetric spectra that current STELLOPT DKES cannot represent."""
+    with xr.open_dataset(boozmn, decode_cf=False, mask_and_scale=False) as ds:
+        for name in ("lasym__logical__", "lasym_b", "lasym"):
+            if name in ds and bool(np.any(np.asarray(ds[name].values))):
+                raise ValueError(
+                    "DKES requires a stellarator-symmetric boozmn file; "
+                    f"{name} marks this equilibrium as asymmetric"
+                )
+        if "bmns_b" not in ds:
+            return
+        sine = np.asarray(ds["bmns_b"].values, dtype=float)
+        cosine = (
+            np.asarray(ds["bmnc_b"].values, dtype=float)
+            if "bmnc_b" in ds
+            else np.zeros(1)
+        )
+        scale = max(float(np.nanmax(np.abs(cosine))), 1.0)
+        tolerance = 128 * np.finfo(float).eps * scale
+        if np.any(np.isfinite(sine) & (np.abs(sine) > tolerance)):
+            raise ValueError(
+                "DKES requires stellarator symmetry and ignores sine |B| harmonics "
+                "(bmns_b); use a symmetric equilibrium or a solver that supports asymmetry"
+            )
+
+
 def _prepare_neo_boozmn(
     source: str | Path,
     destination: str | Path,
@@ -242,6 +268,14 @@ def write_neo_input(
         raise ValueError("NEO requires at least one surface index")
     if theta_n <= 100 or phi_n <= 100:
         raise ValueError("NEO theta_n and phi_n must both be greater than 100")
+    if npart < 2:
+        raise ValueError("NEO npart must be at least 2")
+    if multra < 1:
+        raise ValueError("NEO multra must be at least 1")
+    if not np.isfinite(accuracy) or accuracy <= 0:
+        raise ValueError("NEO accuracy must be finite and strictly positive")
+    if nstep_min < 1 or nstep_max < nstep_min:
+        raise ValueError("NEO requires 1 <= nstep_min <= nstep_max")
     lines = [
         "# stellarator-diagnostics generated NEO input",
         "# standalone xneo text format",
@@ -433,6 +467,7 @@ def run_dkes_solver(
     else:
         generated_booz = Path(boozmn).resolve()
 
+    _validate_dkes_boozmn_symmetry(generated_booz)
     available = _boozmn_surface_labels(generated_booz)
     surfaces = available if surface_indices is None else [int(value) for value in surface_indices]
     if not surfaces:

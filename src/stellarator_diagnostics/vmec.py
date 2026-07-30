@@ -334,9 +334,10 @@ class BoozerAdapter:
         if values.size == len(self.s_grid):
             return float(values[nearest])
         if labels is not None:
-            # booz_xform documents compute_surfs = jlist - 2, while iota_b
-            # retains the full input radial array.
-            index = int(labels[nearest]) - 2
+            # Modern booz_xform writes jlist = compute_surfs + 2 and retains
+            # a leading dummy entry in the full iota_b array.  Fortran NEO
+            # consequently reads iota_b(jlist), which is jlist-1 in Python.
+            index = int(labels[nearest]) - 1
             if 0 <= index < values.size:
                 return float(values[index])
         grid = np.linspace(0, 1, values.size)

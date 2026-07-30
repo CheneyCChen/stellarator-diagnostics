@@ -26,7 +26,9 @@ def infer_boozer_resolution(wout: str | Path) -> tuple[int, int]:
         xn_max = float(np.nanmax(np.abs(np.asarray(ds[xn_name].values, dtype=float))))
         mpol = int(np.asarray(ds["mpol"]).item()) if "mpol" in ds else 1
         ntor = int(np.asarray(ds["ntor"]).item()) if "ntor" in ds else 0
-    mboz = max(mpol, int(np.ceil(xm_max)))
+    # booz_xform interprets mboz as the number of poloidal modes and loops
+    # over m=0,...,mboz-1, so retaining an observed m_max requires m_max+1.
+    mboz = max(mpol, int(np.ceil(xm_max)) + 1)
     nboz = max(ntor, int(np.ceil(xn_max / max(nfp, 1))))
     return mboz, nboz
 
@@ -39,6 +41,11 @@ def run_booz_xform(
     nboz: int | None = None,
 ):
     """Transform a VMEC wout using the maintained ``booz_xform`` Python API."""
+    requested_surfaces = [float(s) for s in surfaces]
+    if not requested_surfaces:
+        raise ValueError("BOOZ_XFORM requires at least one surface")
+    if any(not np.isfinite(s) or not 0 <= s <= 1 for s in requested_surfaces):
+        raise ValueError("BOOZ_XFORM surfaces must be finite normalized flux values in [0, 1]")
     try:
         import booz_xform as bx
     except ImportError as exc:
@@ -56,7 +63,7 @@ def run_booz_xform(
     transform.nboz = int(inferred_nboz if nboz is None else nboz)
     s_in = np.asarray(transform.s_in, dtype=float)
     indices = sorted(
-        {int(np.argmin(np.abs(s_in - float(s)))) for s in surfaces if 0 <= float(s) <= 1}
+        {int(np.argmin(np.abs(s_in - s))) for s in requested_surfaces}
     )
     transform.compute_surfs = indices
     transform.run()

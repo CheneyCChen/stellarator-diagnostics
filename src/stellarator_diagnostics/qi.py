@@ -1,4 +1,4 @@
-"""Goodman et al. squash-stretch-shuffle quasi-isodynamic residual."""
+"""Goodman-compatible squash-stretch-shuffle quasi-isodynamic residual."""
 
 from __future__ import annotations
 
@@ -35,6 +35,9 @@ class GoodmanQiSurface:
     target: np.ndarray = field(repr=False)
 
     def row(self):
+        goodman_mirror_ratio = (self.b_max - self.b_min) / (
+            self.b_max + self.b_min
+        )
         return {
             "s": self.s,
             "surface_label": self.surface_label,
@@ -45,7 +48,8 @@ class GoodmanQiSurface:
             "shuffle_residual": self.shuffle_residual,
             "B_min_T": self.b_min,
             "B_max_T": self.b_max,
-            "mirror_ratio": (self.b_max - self.b_min) / self.b_min,
+            "mirror_ratio": goodman_mirror_ratio,
+            "relative_well_depth": (self.b_max - self.b_min) / self.b_min,
             "zeta_offset_rad": self.zeta_offset,
         }
 
@@ -66,7 +70,10 @@ class GoodmanQiResult:
         finite = values[np.isfinite(values)]
         return {
             "source": str(self.source),
-            "definition": "Goodman et al. squash-stretch-shuffle f_QI",
+            "definition": (
+                "Goodman-compatible squash-stretch-shuffle f_QI "
+                "with feasible-center projection"
+            ),
             "surface_count": len(self.data),
             "nalpha": self.nalpha,
             "nphi": self.nphi,
@@ -129,6 +136,24 @@ def _feasible_centers(raw, delta, period):
     return centers
 
 
+def _evaluate_fourier_field(m, n, bmnc, bmns, theta, zeta, chunk_size=128):
+    """Evaluate Boozer |B| without allocating modes × alpha × phi in full."""
+    theta, zeta = np.broadcast_arrays(
+        np.asarray(theta, dtype=float),
+        np.asarray(zeta, dtype=float),
+    )
+    result = np.zeros(theta.shape, dtype=float)
+    for start in range(0, len(m), chunk_size):
+        stop = min(start + chunk_size, len(m))
+        expand = (slice(start, stop),) + (None,) * theta.ndim
+        phase = m[expand] * theta[None, ...] - n[expand] * zeta[None, ...]
+        result += np.sum(
+            bmnc[expand] * np.cos(phase) + bmns[expand] * np.sin(phase),
+            axis=0,
+        )
+    return result
+
+
 def _auto_zeta_offset(adapter, s, nalpha, nphi):
     """Place the field-period boundaries on the strongest common high-B plane."""
     period = 2 * np.pi / adapter.nfp
@@ -136,13 +161,13 @@ def _auto_zeta_offset(adapter, s, nalpha, nphi):
     zeta = np.linspace(0, period, count, endpoint=False)
     theta = np.linspace(0, 2 * np.pi, max(nalpha, 64), endpoint=False)
     m, n, bmnc, bmns = adapter.modes_at(s)
-    phase = (
-        m[:, None, None] * theta[None, :, None]
-        - n[:, None, None] * zeta[None, None, :]
-    )
-    field = np.sum(
-        bmnc[:, None, None] * np.cos(phase) + bmns[:, None, None] * np.sin(phase),
-        axis=0,
+    field = _evaluate_fourier_field(
+        m,
+        n,
+        bmnc,
+        bmns,
+        theta[:, None],
+        zeta[None, :],
     )
     # In a QI field B_max closes poloidally, so a valid boundary should be
     # high for every poloidal angle rather than only high on average.
@@ -157,13 +182,13 @@ def _fieldline_wells(adapter, s, nalpha, nphi, zeta_offset):
     iota = adapter.iota_at(s)
     m, n, bmnc, bmns = adapter.modes_at(s)
     theta = alpha[:, None] + iota * phi[None, :]
-    phase = (
-        m[:, None, None] * theta[None, :, :]
-        - n[:, None, None] * (zeta_offset + phi)[None, None, :]
-    )
-    values = np.sum(
-        bmnc[:, None, None] * np.cos(phase) + bmns[:, None, None] * np.sin(phase),
-        axis=0,
+    values = _evaluate_fourier_field(
+        m,
+        n,
+        bmnc,
+        bmns,
+        theta,
+        zeta_offset + phi[None, :],
     )
     return alpha, phi, iota, values
 
@@ -294,10 +319,12 @@ def compute_goodman_qi(
     nlevels: int = 129,
     zeta_offset: float | None = None,
 ):
-    """Compute the Goodman et al. normalized QI residual on Boozer surfaces.
+    """Compute a Goodman-compatible normalized QI residual on Boozer surfaces.
 
     ``surfaces`` are normalized-toroidal-flux values. Each is mapped to the
-    nearest surface actually packed into the supplied ``boozmn`` file.
+    nearest surface actually packed into the supplied ``boozmn`` file. The
+    shuffle step uses a feasible-center projection that enforces nested,
+    equal-bounce-width branches.
     """
     if nalpha < 4 or nphi < 9 or nlevels < 9:
         raise ValueError("Goodman QI grids require nalpha>=4, nphi>=9, and nlevels>=9")
@@ -339,7 +366,7 @@ def _plot_profile(result, path):
         fig, ax = plt.subplots(figsize=(7.2, 4.6))
         ax.semilogy(result.data["s"], result.data["f_QI"], "o-", color="black", lw=1.6)
         ax.set_xlabel(r"Normalized toroidal flux $s$")
-        ax.set_ylabel(r"Goodman $f_{\rm QI}$")
+        ax.set_ylabel(r"Goodman-compatible $f_{\rm QI}$")
         ax.set_title("Quasi-isodynamic residual")
         _minor_ticks(ax)
         return _save(fig, path)
@@ -356,7 +383,7 @@ def _plot_wells(surface, path):
             axes[0].plot(surface.phi, surface.original[index], color=color, lw=1.2, label=label)
             axes[1].plot(surface.phi, surface.target[index], color=color, lw=1.2)
         axes[0].set_title("Original Boozer field-line wells")
-        axes[1].set_title("Goodman QI target")
+        axes[1].set_title("Goodman-compatible QI target")
         for ax in axes:
             ax.set_xlabel(r"Boozer toroidal angle $\varphi$ [rad]")
             _minor_ticks(ax)

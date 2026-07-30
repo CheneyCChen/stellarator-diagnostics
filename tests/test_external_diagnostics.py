@@ -283,6 +283,31 @@ def test_run_dkes_solver_scans_d11_star(tmp_path: Path):
     assert all(path.is_file() and path.stat().st_size > 0 for path in outputs)
 
 
+def test_run_dkes_rejects_asymmetric_boozer_spectrum(tmp_path: Path):
+    wout = tmp_path / "wout_case.nc"
+    xr.Dataset({"ns": xr.DataArray(9)}).to_netcdf(wout)
+    boozmn = tmp_path / "boozmn_case.nc"
+    xr.Dataset(
+        {
+            "lasym__logical__": xr.DataArray(1),
+            "jlist": ("radius", [5]),
+            "bmnc_b": (("radius", "mn"), [[2.0, 0.1]]),
+            "bmns_b": (("radius", "mn"), [[0.0, 0.02]]),
+        }
+    ).to_netcdf(boozmn)
+    executable = _write_executable(
+        tmp_path / "xdkes",
+        "raise AssertionError('DKES must not be invoked for asymmetric input')\n",
+    )
+    with pytest.raises(ValueError, match="stellarator-symmetric"):
+        run_dkes_solver(
+            wout,
+            tmp_path / "dkes_asymmetric",
+            boozmn=boozmn,
+            executable=executable,
+        )
+
+
 def test_run_cobra_solver_with_fake_executable(tmp_path: Path):
     wout = tmp_path / "wout_case.nc"
     xr.Dataset({"ns": xr.DataArray(9)}).to_netcdf(wout)

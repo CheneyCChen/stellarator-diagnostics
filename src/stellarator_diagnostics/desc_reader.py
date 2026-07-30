@@ -5,8 +5,23 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from scipy.integrate import trapezoid
 
 from .model import EquilibriumData, FieldMap, Surface
+
+
+def _rho_derivative_to_s(s, derivative):
+    """Convert dV/drho to dV/ds for s=rho**2, including a finite axis limit."""
+    s = np.asarray(s, dtype=float)
+    derivative = np.asarray(derivative, dtype=float)
+    rho = np.sqrt(np.clip(s, 0.0, None))
+    converted = np.full_like(derivative, np.nan)
+    nonaxis = rho > np.sqrt(np.finfo(float).eps)
+    converted[nonaxis] = derivative[nonaxis] / (2 * rho[nonaxis])
+    finite = np.flatnonzero(nonaxis & np.isfinite(converted))
+    if finite.size:
+        converted[~nonaxis] = converted[finite[0]]
+    return converted
 
 
 class DescAdapter:
@@ -112,12 +127,18 @@ class DescAdapter:
                 profiles[out_name] = self._profile(desc_name)
             except Exception:
                 continue
+        if "dV_ds" in profiles:
+            s_volume, dV_drho = profiles["dV_ds"]
+            profiles["dV_ds"] = (
+                s_volume,
+                _rho_derivative_to_s(s_volume, dV_drho),
+            )
         if "iota" in profiles:
             s, iota = profiles["iota"]
             scalars.update(
                 iota_axis=float(iota[0]),
                 iota_edge=float(iota[-1]),
-                iota_mean=float(np.trapz(iota, s)),
+                iota_mean=float(trapezoid(iota, s)),
                 mean_shear=float(np.polyfit(s, iota, 1)[0]),
             )
         stability = {}
@@ -134,6 +155,8 @@ class DescAdapter:
             mask = s >= 0.05
             scalars["D_Mercier_min_s>=0.05"] = float(np.nanmin(dm[mask]))
             scalars["D_Mercier_negative_fraction"] = float(np.mean(dm[mask] < 0))
+        if "magnetic_well" in stability:
+            profiles["magnetic_well"] = stability.pop("magnetic_well")
         return EquilibriumData(
             source=self.path,
             backend="DESC",
@@ -141,7 +164,12 @@ class DescAdapter:
             nfp=self.nfp,
             scalars=scalars,
             profiles=profiles,
-            profile_units={"pressure": "Pa", "current": "A"},
+            profile_units={
+                "pressure": "Pa",
+                "current": "A",
+                "dV_ds": "m³",
+                "magnetic_well": "dimensionless",
+            },
             stability=stability,
             metadata={
                 "L": int(self.eq.L),
