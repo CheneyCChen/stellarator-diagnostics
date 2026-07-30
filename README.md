@@ -90,7 +90,7 @@ stell-diag cobra cobra_grate.case -o diagnostics/cobra
 stell-diag run-neo wout_case.nc -o runs/neo
 
 # 使用已有 Boozer 文件并只计算指定 VMEC/BOOZ_XFORM jlist labels；
-# 程序会生成严格匹配该子集的本地 boozmn，避免 NEO 的位置索引与标签错配
+# 程序会原样复制 boozmn，并将这些真实 VMEC 磁面编号直接传给 NEO
 stell-diag run-neo wout_case.nc --boozmn boozmn_case.nc \
   --surface-indices 19 38 57 76 95 114 126 -o runs/neo
 
@@ -205,9 +205,9 @@ NFP=4、A≈8、iota≈0.68–0.79 构型的自动检查。
    `run-cobra` 会调用真实 `xcobravmec`；任何非零退出码、超时或缺失输出都会
    作为失败报告。NEO 需要 `boozmn`；DKES 使用 Boozer/直线磁力线坐标输入；
    COBRAVMEC 直接基于 VMEC 平衡。
-8. 当前 STELLOPT NEO 按 `boozmn` 内的位置 `1..N` 计算磁面，同时把控制文件中的
-   surface array 写成输出标签。`run-neo --surface-indices` 因此会先提取严格匹配
-   所选 `jlist` 的本地 `boozmn`，向 NEO 传入位置索引，再在 CSV 中恢复真实标签。
+8. STELLOPT NEO 使用控制文件中的真实 VMEC 磁面编号访问 `boozmn` 的完整径向数组，
+   再把所选磁面压缩到内部工作数组。`run-neo --surface-indices` 因此会验证编号属于
+   `jlist`，但不会裁剪或重写 BOOZ_XFORM NetCDF，以保留 `ns_b`、完整剖面和字符串编码。
 9. COBRAVMEC 先求原始本征值 $\lambda$，再向 `cobra_grate` 写入带符号增长率：
    $\lambda<0$ 时写入正的 $\sqrt{-\lambda}$，表示不稳定；稳定分支写入负值。
    求解器失败哨兵值 `100` 会被标为 `solver_failed` 并使 `run-cobra` 明确失败，
