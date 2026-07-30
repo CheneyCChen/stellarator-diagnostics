@@ -12,7 +12,7 @@ from .boozer import run_booz_xform
 from .external import diagnose_cobra, diagnose_dkes, diagnose_neo
 from .plots import plot_boozer_surface_files
 from .readers import load_equilibrium
-from .runners import run_cobra_solver, run_neo_solver
+from .runners import DEFAULT_DKES_CMUL, run_cobra_solver, run_dkes_solver, run_neo_solver
 
 
 def _parser():
@@ -91,7 +91,7 @@ def _parser():
         "--surface-indices",
         type=int,
         nargs="+",
-        help="VMEC/BOOZ_XFORM jlist labels; a matching temporary boozmn subset is created",
+        help="VMEC/BOOZ_XFORM jlist labels; the boozmn is staged unchanged",
     )
     p.add_argument("--mboz", type=int)
     p.add_argument("--nboz", type=int)
@@ -103,6 +103,40 @@ def _parser():
     p.add_argument("--nstep-min", type=int, default=500)
     p.add_argument("--nstep-max", type=int, default=5000)
     p.add_argument("--timeout", type=float, default=3600)
+
+    p = sub.add_parser(
+        "run-dkes",
+        help="Run STELLOPT xdkes and scan the radial monoenergetic coefficient D11*",
+    )
+    p.add_argument("wout")
+    p.add_argument("-o", "--outdir", default="dkes_run")
+    p.add_argument("--boozmn", help="Existing boozmn; otherwise run BOOZ_XFORM")
+    p.add_argument("--executable", default="xdkes")
+    p.add_argument(
+        "--surface-indices",
+        type=int,
+        nargs="+",
+        help="VMEC/BOOZ_XFORM jlist labels; defaults to every available Boozer surface",
+    )
+    p.add_argument(
+        "--cmul",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_DKES_CMUL),
+        help="Collisionality scan values nu/v [m^-1]",
+    )
+    p.add_argument(
+        "--efield",
+        type=float,
+        nargs="+",
+        default=[0.0],
+        help="Normalized radial electric-field values E_s/v",
+    )
+    p.add_argument("--mboz", type=int)
+    p.add_argument("--nboz", type=int)
+    p.add_argument("--coupling-order", type=int, default=4)
+    p.add_argument("--lalpha", type=int, default=100)
+    p.add_argument("--timeout", type=float, default=7200, help="Timeout per surface [s]")
 
     p = sub.add_parser(
         "run-cobra",
@@ -202,6 +236,29 @@ def main(argv=None):
             timeout=args.timeout,
         )
         print(json.dumps({"run": asdict(run), "summary": result.summary()}, indent=2, default=str))
+        print("\n".join(str(path) for path in outputs))
+    elif args.command == "run-dkes":
+        result, runs, outputs = run_dkes_solver(
+            args.wout,
+            args.outdir,
+            boozmn=args.boozmn,
+            executable=args.executable,
+            surface_indices=args.surface_indices,
+            cmul=args.cmul,
+            efield=args.efield,
+            mboz=args.mboz,
+            nboz=args.nboz,
+            coupling_order=args.coupling_order,
+            lalpha=args.lalpha,
+            timeout=args.timeout,
+        )
+        print(
+            json.dumps(
+                {"runs": [asdict(run) for run in runs], "summary": result.summary()},
+                indent=2,
+                default=str,
+            )
+        )
         print("\n".join(str(path) for path in outputs))
     elif args.command == "run-cobra":
         result, run, outputs = run_cobra_solver(
